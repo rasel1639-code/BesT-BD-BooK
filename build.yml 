@@ -1,0 +1,558 @@
+name: Build Best BD Book APK
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: "আপনার সাইটের ঠিকানা (যেমন https://yourname.blogspot.com)"
+        required: true
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.9"
+      - name: Create project files
+        env:
+          SITE_URL: ${{ github.event.inputs.site_url }}
+        run: |
+          mkdir -p .
+          cat > settings.gradle <<'EOF_0'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "BestBDBook"
+          include ':app'
+          EOF_0
+          mkdir -p .
+          cat > build.gradle <<'EOF_1'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
+          }
+          EOF_1
+          mkdir -p .
+          cat > gradle.properties <<'EOF_2'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          EOF_2
+          mkdir -p app
+          cat > app/build.gradle <<'EOF_3'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.bestbdbook.app'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.bestbdbook.app'
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+          }
+          EOF_3
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF_4'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <application
+                  android:label="Best BD Book"
+                  android:icon="@drawable/ic_launcher"
+                  android:largeHeap="true"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:screenOrientation="portrait"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF_4
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF_5'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#2F7BFF" android:pathData="M0,0h108v108h-108z"/>
+              <path android:fillColor="#FFFFFF" android:pathData="M30,34h22c3,0 2,2 2,2v38c0,0 -1,-3 -4,-3H30z"/>
+              <path android:fillColor="#22B573" android:pathData="M78,34H56c-3,0 -2,2 -2,2v38c0,0 1,-3 4,-3h20z"/>
+          </vector>
+          EOF_5
+          mkdir -p app/src/main/java/com/bestbdbook/app
+          cat > app/src/main/java/com/bestbdbook/app/MainActivity.kt <<'EOF_6'
+          package com.bestbdbook.app
+
+          import android.app.Activity
+          import android.app.AlertDialog
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Bitmap
+          import android.graphics.Color
+          import android.graphics.ColorMatrixColorFilter
+          import android.graphics.drawable.GradientDrawable
+          import android.graphics.pdf.PdfRenderer
+          import android.net.ConnectivityManager
+          import android.net.Uri
+          import android.os.Bundle
+          import android.os.ParcelFileDescriptor
+          import android.util.LruCache
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.webkit.CookieManager
+          import android.webkit.WebResourceError
+          import android.webkit.WebResourceRequest
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import android.widget.AbsListView
+          import android.widget.BaseAdapter
+          import android.widget.Button
+          import android.widget.FrameLayout
+          import android.widget.HorizontalScrollView
+          import android.widget.ImageView
+          import android.widget.LinearLayout
+          import android.widget.ListView
+          import android.widget.ScrollView
+          import android.widget.TextView
+          import android.widget.Toast
+          import java.io.File
+          import java.net.HttpURLConnection
+          import java.net.URL
+          import java.net.URLDecoder
+
+          const val SITE = "__SITE_URL__"
+
+          class MainActivity : Activity() {
+              private lateinit var web: WebView
+              private lateinit var libView: ScrollView
+              private lateinit var libList: LinearLayout
+              private lateinit var reader: LinearLayout
+              private lateinit var holder: HorizontalScrollView
+              private lateinit var listV: ListView
+              private lateinit var titleT: TextView
+              private lateinit var pageT: TextView
+              private lateinit var bar: LinearLayout
+              private lateinit var btnLib: Button
+              private var pdf: PdfRenderer? = null
+              private var pfd: ParcelFileDescriptor? = null
+              private var curFile: File? = null
+              private var curPage = 1
+              private var zoom = 1.0f
+              private var night = false
+              private var failed = false
+              private val cache = LruCache<Int, Bitmap>(3)
+              private val dir: File by lazy { File(filesDir, "books").also { it.mkdirs() } }
+              private val sp by lazy { getSharedPreferences("bbb", MODE_PRIVATE) }
+              private val siteHost: String by lazy { (Uri.parse(SITE).host ?: "").removePrefix("www.") }
+              private val nightF = ColorMatrixColorFilter(floatArrayOf(
+                  -1f, 0f, 0f, 0f, 255f,
+                  0f, -1f, 0f, 0f, 255f,
+                  0f, 0f, -1f, 0f, 255f,
+                  0f, 0f, 0f, 1f, 0f))
+              private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+              private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+
+              private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+              private fun toast(t: String) { Toast.makeText(this, t, Toast.LENGTH_LONG).show() }
+              private fun pageW(): Int = (resources.displayMetrics.widthPixels * zoom).toInt()
+
+              @Suppress("DEPRECATION")
+              private fun online(): Boolean {
+                  val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                  val n = cm.activeNetworkInfo
+                  return n != null && n.isConnected
+              }
+
+              private fun btn(t: String, f: () -> Unit): Button {
+                  val b = Button(this)
+                  b.text = t
+                  b.setTextColor(Color.WHITE)
+                  b.setBackgroundColor(Color.TRANSPARENT)
+                  b.minWidth = 0
+                  b.minimumWidth = 0
+                  b.setPadding(dp(12), 0, dp(12), 0)
+                  b.setOnClickListener { f() }
+                  return b
+              }
+
+              override fun onCreate(b: Bundle?) {
+                  super.onCreate(b)
+                  val root = LinearLayout(this)
+                  root.orientation = LinearLayout.VERTICAL
+                  root.setBackgroundColor(Color.parseColor("#0F1A2B"))
+                  val frame = FrameLayout(this)
+                  web = WebView(this)
+                  libView = ScrollView(this)
+                  libView.visibility = View.GONE
+                  libView.setBackgroundColor(Color.parseColor("#0F1A2B"))
+                  libList = LinearLayout(this)
+                  libList.orientation = LinearLayout.VERTICAL
+                  libList.setPadding(dp(12), dp(12), dp(12), dp(12))
+                  libView.addView(libList)
+                  buildReader()
+                  frame.addView(web, FrameLayout.LayoutParams(MATCH, MATCH))
+                  frame.addView(libView, FrameLayout.LayoutParams(MATCH, MATCH))
+                  frame.addView(reader, FrameLayout.LayoutParams(MATCH, MATCH))
+                  root.addView(frame, LinearLayout.LayoutParams(MATCH, 0, 1f))
+                  bar = LinearLayout(this)
+                  bar.orientation = LinearLayout.HORIZONTAL
+                  bar.setBackgroundColor(Color.parseColor("#17253B"))
+                  bar.addView(btn("\uD83C\uDF10 সাইট") { showWeb() }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  btnLib = btn("") { showLib() }
+                  bar.addView(btnLib, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  root.addView(bar, LinearLayout.LayoutParams(MATCH, WRAP))
+                  setContentView(root)
+                  setupWeb()
+                  refreshBtn()
+                  if (online()) { web.loadUrl(SITE) } else { toast("ইন্টারনেট নেই — ডাউনলোড করা বই পড়ুন"); showLib() }
+              }
+
+              private fun refreshBtn() { btnLib.text = "\uD83D\uDCE5 আমার বই (" + files().size + ")" }
+
+              private fun showWeb() {
+                  libView.visibility = View.GONE
+                  web.visibility = View.VISIBLE
+                  if (failed || web.url == null) { failed = false; web.loadUrl(SITE) }
+              }
+
+              private fun showLib() {
+                  web.visibility = View.GONE
+                  libView.visibility = View.VISIBLE
+                  buildLib()
+                  refreshBtn()
+              }
+
+              private fun setupWeb() {
+                  val s = web.settings
+                  s.javaScriptEnabled = true
+                  s.domStorageEnabled = true
+                  s.setSupportMultipleWindows(false)
+                  CookieManager.getInstance().setAcceptCookie(true)
+                  web.webViewClient = object : WebViewClient() {
+                      override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
+                          val u = r.url
+                          val h = u.host ?: ""
+                          if (u.scheme == "http" || u.scheme == "https") {
+                              if (h.endsWith(siteHost) || h.contains("google.com") || h.contains("googleusercontent.com") || h.contains("blogger.com")) return false
+                          }
+                          try { startActivity(Intent(Intent.ACTION_VIEW, u)) } catch (e: Exception) { }
+                          return true
+                      }
+                      override fun onReceivedError(v: WebView, r: WebResourceRequest, e: WebResourceError) {
+                          if (r.isForMainFrame) {
+                              failed = true
+                              toast("সাইট খোলা যাচ্ছে না — ডাউনলোড করা বই পড়ুন")
+                              showLib()
+                          }
+                      }
+                  }
+                  web.setDownloadListener { url, ua, cd, mime, _ -> startDownload(url, ua, cd, mime) }
+              }
+
+              private fun fileName(cd: String?): String {
+                  var n = ""
+                  if (cd != null) {
+                      val m1 = Regex("filename\\*\\s*=\\s*[Uu][Tt][Ff]-8''([^;]+)").find(cd)
+                      if (m1 != null) {
+                          n = try { URLDecoder.decode(m1.groupValues[1].trim(), "UTF-8") } catch (e: Exception) { "" }
+                      }
+                      if (n.isEmpty()) {
+                          val m2 = Regex("filename\\s*=\\s*\"?([^\";]+)\"?").find(cd)
+                          if (m2 != null) n = m2.groupValues[1].trim()
+                      }
+                  }
+                  if (n.isEmpty()) n = "book-" + System.currentTimeMillis()
+                  n = n.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                  if (!n.lowercase().endsWith(".pdf")) n += ".pdf"
+                  return n
+              }
+
+              private fun startDownload(url: String, ua: String?, cd: String?, mime: String?) {
+                  toast("⬇️ ডাউনলোড শুরু হচ্ছে…")
+                  Thread {
+                      try {
+                          val c = URL(url).openConnection() as HttpURLConnection
+                          c.instanceFollowRedirects = true
+                          c.connectTimeout = 20000
+                          c.readTimeout = 60000
+                          if (ua != null) c.setRequestProperty("User-Agent", ua)
+                          val ck = CookieManager.getInstance().getCookie(url)
+                          if (ck != null) c.setRequestProperty("Cookie", ck)
+                          c.connect()
+                          if (c.responseCode !in 200..299) throw Exception("HTTP " + c.responseCode)
+                          val name = fileName(c.getHeaderField("Content-Disposition") ?: cd)
+                          val tmp = File(dir, "$name.part")
+                          c.inputStream.use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
+                          val head = ByteArray(5)
+                          tmp.inputStream().use { it.read(head) }
+                          if (String(head) != "%PDF-") { tmp.delete(); throw Exception("ফাইলটি PDF নয়") }
+                          val dest = File(dir, name)
+                          if (dest.exists()) dest.delete()
+                          tmp.renameTo(dest)
+                          runOnUiThread {
+                              toast("✅ সংরক্ষিত হয়েছে — “আমার বই” এ অফলাইনে পড়তে পারবেন")
+                              refreshBtn()
+                              if (libView.visibility == View.VISIBLE) buildLib()
+                          }
+                      } catch (e: Exception) {
+                          runOnUiThread { toast("❌ ডাউনলোড হয়নি: " + (e.message ?: "")) }
+                      }
+                  }.start()
+              }
+
+              private fun files(): List<File> {
+                  val l = dir.listFiles { f -> f.name.endsWith(".pdf") } ?: return emptyList()
+                  return l.sortedByDescending { it.lastModified() }
+              }
+
+              private fun buildLib() {
+                  libList.removeAllViews()
+                  val h = TextView(this)
+                  h.text = "\uD83D\uDCE5 আমার বই — ইন্টারনেট ছাড়াই পড়া যাবে\n(মুছতে বইয়ে চেপে ধরে রাখুন)"
+                  h.setTextColor(Color.WHITE)
+                  h.textSize = 15f
+                  h.setPadding(0, 0, 0, dp(12))
+                  libList.addView(h)
+                  val fs = files()
+                  if (fs.isEmpty()) {
+                      val e = TextView(this)
+                      e.text = "এখনো কোনো বই ডাউনলোড করা হয়নি।\n\n“সাইট” এ গিয়ে কোনো বইয়ের ডাউনলোড বাটন চাপুন — বইটি এখানে জমা হবে।"
+                      e.setTextColor(Color.parseColor("#9FB0C8"))
+                      e.textSize = 15f
+                      e.setPadding(0, dp(30), 0, 0)
+                      libList.addView(e)
+                      return
+                  }
+                  for (f in fs) {
+                      val pg = sp.getInt("p_" + f.name, 0)
+                      val tot = sp.getInt("t_" + f.name, 0)
+                      val mb = String.format("%.1f", f.length() / 1048576.0)
+                      val row = TextView(this)
+                      row.text = f.name.removeSuffix(".pdf") + "\n" + mb + " MB" + (if (pg > 1 && tot > 0) "  •  পৃষ্ঠা $pg / $tot" else "")
+                      row.setTextColor(Color.WHITE)
+                      row.textSize = 15f
+                      row.setPadding(dp(14), dp(14), dp(14), dp(14))
+                      val bg = GradientDrawable()
+                      bg.setColor(Color.parseColor("#17253B"))
+                      bg.cornerRadius = dp(12).toFloat()
+                      row.background = bg
+                      row.setOnClickListener { openPdf(f) }
+                      row.setOnLongClickListener {
+                          AlertDialog.Builder(this)
+                              .setMessage("“" + f.name.removeSuffix(".pdf") + "” মুছে ফেলবেন?")
+                              .setPositiveButton("মুছুন") { _, _ ->
+                                  f.delete()
+                                  sp.edit().remove("p_" + f.name).remove("t_" + f.name).apply()
+                                  buildLib()
+                                  refreshBtn()
+                              }
+                              .setNegativeButton("না", null)
+                              .show()
+                          true
+                      }
+                      val lp = LinearLayout.LayoutParams(MATCH, WRAP)
+                      lp.bottomMargin = dp(10)
+                      libList.addView(row, lp)
+                  }
+              }
+
+              private fun buildReader() {
+                  reader = LinearLayout(this)
+                  reader.orientation = LinearLayout.VERTICAL
+                  reader.visibility = View.GONE
+                  reader.setBackgroundColor(Color.parseColor("#0F1A2B"))
+                  val top = LinearLayout(this)
+                  top.orientation = LinearLayout.HORIZONTAL
+                  top.gravity = Gravity.CENTER_VERTICAL
+                  top.setBackgroundColor(Color.parseColor("#17253B"))
+                  titleT = TextView(this)
+                  titleT.setTextColor(Color.WHITE)
+                  titleT.textSize = 13f
+                  titleT.maxLines = 1
+                  titleT.ellipsize = android.text.TextUtils.TruncateAt.END
+                  pageT = TextView(this)
+                  pageT.setTextColor(Color.parseColor("#FFC43D"))
+                  pageT.textSize = 12f
+                  pageT.setPadding(dp(6), 0, dp(6), 0)
+                  top.addView(btn("✕") { closeReader() })
+                  top.addView(titleT, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  top.addView(pageT)
+                  top.addView(btn("\uD83C\uDF13") { toggleNight() })
+                  top.addView(btn("−") { setZoom(zoom - 0.2f) })
+                  top.addView(btn("+") { setZoom(zoom + 0.2f) })
+                  listV = ListView(this)
+                  listV.divider = null
+                  listV.dividerHeight = dp(8)
+                  listV.setBackgroundColor(Color.parseColor("#0F1A2B"))
+                  listV.setOnScrollListener(object : AbsListView.OnScrollListener {
+                      override fun onScrollStateChanged(v: AbsListView?, s: Int) {
+                          if (s == AbsListView.OnScrollListener.SCROLL_STATE_IDLE) saveProg()
+                      }
+                      override fun onScroll(v: AbsListView?, first: Int, vis: Int, tot: Int) { updPage(first + 1) }
+                  })
+                  holder = HorizontalScrollView(this)
+                  holder.addView(listV, FrameLayout.LayoutParams(pageW(), MATCH))
+                  reader.addView(top, LinearLayout.LayoutParams(MATCH, WRAP))
+                  reader.addView(holder, LinearLayout.LayoutParams(MATCH, 0, 1f))
+              }
+
+              private fun updPage(n: Int) {
+                  curPage = n
+                  pageT.text = "$n / " + (pdf?.pageCount ?: 0)
+              }
+
+              private fun saveProg() {
+                  val f = curFile ?: return
+                  if (pdf == null) return
+                  sp.edit().putInt("p_" + f.name, curPage).apply()
+              }
+
+              private fun openPdf(f: File) {
+                  closePdf()
+                  try {
+                      pfd = ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
+                      pdf = PdfRenderer(pfd!!)
+                  } catch (e: Exception) {
+                      closePdf()
+                      toast("এই PDF টি খোলা যায়নি")
+                      return
+                  }
+                  curFile = f
+                  zoom = 1.0f
+                  cache.evictAll()
+                  sp.edit().putInt("t_" + f.name, pdf!!.pageCount).apply()
+                  titleT.text = f.name.removeSuffix(".pdf")
+                  listV.layoutParams = FrameLayout.LayoutParams(pageW(), MATCH)
+                  listV.adapter = PA()
+                  val saved = sp.getInt("p_" + f.name, 1)
+                  listV.post { listV.setSelection(maxOf(0, saved - 1)) }
+                  updPage(saved)
+                  bar.visibility = View.GONE
+                  reader.visibility = View.VISIBLE
+              }
+
+              private fun closePdf() {
+                  try { pdf?.close() } catch (e: Exception) { }
+                  try { pfd?.close() } catch (e: Exception) { }
+                  pdf = null
+                  pfd = null
+                  cache.evictAll()
+              }
+
+              private fun closeReader() {
+                  saveProg()
+                  listV.adapter = null
+                  closePdf()
+                  curFile = null
+                  reader.visibility = View.GONE
+                  bar.visibility = View.VISIBLE
+                  buildLib()
+                  refreshBtn()
+              }
+
+              private fun setZoom(z: Float) {
+                  if (pdf == null) return
+                  val pos = listV.firstVisiblePosition
+                  zoom = z.coerceIn(0.8f, 1.8f)
+                  cache.evictAll()
+                  listV.layoutParams = FrameLayout.LayoutParams(pageW(), MATCH)
+                  (listV.adapter as? BaseAdapter)?.notifyDataSetChanged()
+                  listV.setSelection(pos)
+              }
+
+              private fun toggleNight() {
+                  night = !night
+                  (listV.adapter as? BaseAdapter)?.notifyDataSetChanged()
+              }
+
+              private fun render(p: Int, w: Int): Bitmap? {
+                  val c = cache.get(p)
+                  if (c != null) return c
+                  val r = pdf ?: return null
+                  return try {
+                      val pg = r.openPage(p)
+                      val h = (w * pg.height.toFloat() / pg.width).toInt()
+                      val bm = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                      bm.eraseColor(Color.WHITE)
+                      pg.render(bm, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                      pg.close()
+                      cache.put(p, bm)
+                      bm
+                  } catch (e: Throwable) {
+                      null
+                  }
+              }
+
+              inner class PA : BaseAdapter() {
+                  override fun getCount(): Int = pdf?.pageCount ?: 0
+                  override fun getItem(p: Int): Any = p
+                  override fun getItemId(p: Int): Long = p.toLong()
+                  override fun getView(p: Int, cv: View?, parent: ViewGroup?): View {
+                      val iv = (cv as? ImageView) ?: ImageView(this@MainActivity)
+                      val w = pageW()
+                      val bm = render(p, w)
+                      iv.scaleType = ImageView.ScaleType.FIT_XY
+                      if (night) { iv.colorFilter = nightF } else { iv.clearColorFilter() }
+                      if (bm != null) {
+                          iv.layoutParams = AbsListView.LayoutParams(w, bm.height)
+                          iv.setImageBitmap(bm)
+                      } else {
+                          iv.layoutParams = AbsListView.LayoutParams(w, (w * 1.41f).toInt())
+                          iv.setImageBitmap(null)
+                      }
+                      return iv
+                  }
+              }
+
+              override fun onPause() {
+                  super.onPause()
+                  saveProg()
+                  CookieManager.getInstance().flush()
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  closePdf()
+              }
+
+              @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+              override fun onBackPressed() {
+                  if (reader.visibility == View.VISIBLE) closeReader()
+                  else if (libView.visibility == View.VISIBLE) showWeb()
+                  else if (web.canGoBack()) web.goBack()
+                  else super.onBackPressed()
+              }
+          }
+          EOF_6
+          SITE=$(echo "$SITE_URL" | tr -d ' ')
+          case "$SITE" in http*) ;; *) SITE="https://$SITE" ;; esac
+          sed -i "s|__SITE_URL__|$SITE|" app/src/main/java/com/bestbdbook/app/MainActivity.kt
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: Best BD Book APK ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
