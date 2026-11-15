@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Best BD Book</title>
+<style>
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:#0b1020}
+body{font-family:system-ui,"Noto Sans Bengali","Hind Siliguri",sans-serif}
+button,input{font:inherit;color:inherit}button{cursor:pointer}
+#app{--bg:#0b1020;--panel:#141b30;--text:#f4f6ff;--muted:#aab4d0;--cyan:#42e8e0;--line:rgba(255,255,255,.09);position:fixed;inset:0;display:flex;flex-direction:column;background:var(--bg);color:var(--text)}
+#app.light{--bg:#f4f7fc;--panel:#fff;--text:#12182b;--muted:#5b6785;--cyan:#0b57d0;--line:rgba(18,24,43,.12)}
+.scr{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))}
+.scr.fr{padding:0;overflow:hidden}.fr iframe{width:100%;height:100%;border:0;display:block}
+.pad{padding:12px 16px 24px}
+.nav{position:fixed;left:50%;transform:translateX(-50%);width:min(100%,620px);bottom:0;z-index:8;display:flex;justify-content:center;padding:9px 4px calc(9px + env(safe-area-inset-bottom,0px));border:1px solid var(--line);border-bottom:0;border-radius:18px 18px 0 0;background:rgba(12,17,34,.96);backdrop-filter:blur(14px)}
+#app.light .nav{background:rgba(255,255,255,.97)}
+.nav button{flex:1;max-width:104px;border:0;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px;font-weight:700;opacity:.85}
+.nav button.on{opacity:1}.nav svg{width:26px;height:26px}
+.nav [data-t=home]{color:#4d9bff}.nav [data-t=search]{color:#26c6b0}.nav [data-t=dl]{color:#4cc35f}.nav [data-t=me]{color:#c26be0}.nav [data-t=menu]{color:var(--text)}
+#app.light .nav [data-t=home]{color:#1a73e8}#app.light .nav [data-t=search]{color:#00897b}#app.light .nav [data-t=dl]{color:#2e7d32}#app.light .nav [data-t=me]{color:#9c27b0}
+.top{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;padding:calc(10px + env(safe-area-inset-top,0px)) 12px 10px;background:var(--bg);border-bottom:1px solid var(--line)}
+.lg{display:flex;align-items:center;gap:8px}
+.lgi{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:linear-gradient(145deg,#4e42a6,#168d9a);font-size:19px;overflow:hidden}.lgi img{width:100%;height:100%;object-fit:cover}
+.brand{font-family:Georgia,serif;font-size:17px;font-weight:800;color:#5aa2ff;white-space:nowrap}.brand i{font-style:normal;color:#4ade80}
+.sq{width:40px;height:40px;border:1px solid var(--line);border-radius:12px;background:var(--panel);display:grid;place-items:center;padding:0;font-size:16px}
+h1{font-size:15px;font-weight:700;margin:0 0 12px}
+.big{display:block;width:100%;border:0;border-radius:13px;height:48px;background:var(--cyan);color:#07121d;font-weight:800;font-size:15px;margin-bottom:10px}
+#app.light .big{color:#fff}
+.in{width:100%;height:46px;border:1px solid var(--line);border-radius:12px;padding:0 14px;background:var(--panel);margin-bottom:12px;outline:0}.in:focus{border-color:var(--cyan)}
+.lb{font-size:13px;font-weight:700;color:var(--muted);padding:6px 0 8px}
+.row{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;margin-bottom:10px}
+.cv{width:52px;height:70px;border-radius:10px;display:grid;place-items:center;font-size:24px;font-weight:800;flex:none;color:#fff}
+.mid{flex:1;min-width:0}.t{font-size:14px;font-weight:700;line-height:1.35;word-break:break-word}.s{font-size:12px;color:var(--muted);margin-top:2px}
+.pb{height:6px;background:var(--line);border-radius:3px;margin-top:8px;overflow:hidden}.pb i{display:block;height:100%;background:#4cc35f}
+.del{border:0;background:none;font-size:18px;padding:6px}
+.mcard{margin:0 0 14px;border:1px solid var(--line);border-radius:16px;background:var(--panel);overflow:hidden}
+.mh{padding:10px 14px;font-size:12.5px;font-weight:700;color:var(--muted);background:rgba(127,140,170,.13);border-bottom:1px solid var(--line)}
+.mrow{display:flex;align-items:center;gap:10px;width:100%;min-height:46px;padding:7px 14px;border:0;border-bottom:1px solid var(--line);background:transparent;font-size:14px;font-weight:600;text-align:left}
+.mrow:last-child{border-bottom:0}.mrow:active{background:rgba(127,140,170,.16)}
+.mi{width:28px;text-align:center;font-size:19px;flex:none}
+.mc{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:rgba(127,140,170,.22);color:#5aa2ff;flex:none}
+.mc svg,.ri svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.mt{flex:1}.mg,.rg{color:var(--muted);font-size:20px}
+.av{width:84px;height:84px;margin:10px auto 14px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,#fed787,#f47f8b 54%,#805cf3);color:#fff;font-size:36px;font-weight:800}
+.hi{text-align:center;font-size:18px;font-weight:800;margin-bottom:4px}.ml{text-align:center;color:var(--muted);font-size:14px;margin-bottom:22px;word-break:break-all}
+.am{margin:0 0 18px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}
+.ar{display:flex;align-items:center;gap:12px;width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;padding:13px 12px;font-size:15px;font-weight:700;text-align:left}
+.ar:last-child{border-bottom:0}.ri{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:var(--bg);flex:none}
+.rt{flex:1}.rc{color:var(--muted);font-size:13px}
+.gh{width:100%;height:48px;border:1px solid var(--line);border-radius:13px;background:transparent;font-weight:800}
+.empty{color:var(--muted);padding:18px;text-align:center}
+#tt{position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom,0px));background:#000d;color:#fff;border-radius:10px;padding:10px;font-size:13px;text-align:center;display:none;z-index:9;max-width:600px;margin:auto}
+</style>
+</head>
+<body>
+<div id="app"><div class="scr" id="s"></div><div class="nav" id="nav"></div><div id="tt"></div></div>
+<script>
+/* ===== ১) এখানে আপনার সাইটের তথ্য বসান ===== */
+const CFG={
+  site:"https://YOUR-SITE.blogspot.com/",   // আপনার সাইটের ঠিকানা
+  logo:"",                                    // লোগো ছবির লিংক (খালি থাকলে 📚)
+  pages:{search:"search",cats:"",auth:"",comm:"",contact:"",about:"",privacy:"",terms:""} // সাইটের পেজের পথ (site-এর পরে)
+};
+/* ===== ২) অ্যাপের হুক: আপনার অ্যাপের ফাংশন দিয়ে বদলান ===== */
+window.BBB={
+  open:function(b){ if(b.url) location.href=b.url; else toast("বই খুলছে: "+b.t); },   // ডাউনলোড করা বই খোলা
+  remove:function(b){},                                                                 // ফাইল মোছার কাজ (ঐচ্ছিক)
+  login:function(){ location.href=CFG.site; },                                          // লগইন পেজ
+  setHomeCache:function(html){ try{localStorage.setItem("bbb_home_cache",html)}catch(e){} } // অনলাইনে হোম পেজের কপি রাখতে
+};
+/* ===== ডেটা: localStorage-এর এই কী-গুলো থেকে পড়া হয় ===== */
+/* bbb_downloads=[{t,mb,pg,tot,url}]  bbb_user={name,mobile}  bbb_reading / bbb_fav / bbb_bmk / bbb_hist = তালিকা */
+const $=id=>document.getElementById(id);
+const bn=s=>String(s).replace(/\d/g,d=>"০১২৩৪৫৬৭৮৯"[d]);
+const ls=(k,d)=>{try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v}catch(e){return d}};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const IC={
+home:'<path fill="currentColor" d="M12 2.6 2 11.3h3V21h5.5v-6h3v6H19v-9.7h3z"/>',
+search:'<circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="m15.5 15.5 5.5 5.5" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/>',
+dl:'<path d="M12 3v12m0 0-5-5m5 5 5-5M4 20h16" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>',
+me:'<circle cx="12" cy="7.5" r="4.6" fill="currentColor"/><path fill="currentColor" d="M3 21c0-4.2 4-6.8 9-6.8s9 2.6 9 6.8z"/>',
+menu:'<path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/>'};
+const NAV=[["home","হোম"],["search","সার্চ"],["dl","ডাউনলোড"],["me","অ্যাকাউন্ট"],["menu","মেনু"]];
+let on=navigator.onLine,tab="home",cached=false,q="",tmr;
+if(ls("bbb_light",false))$("app").classList.add("light");
+function toast(m){const e=$("tt");e.textContent=m;e.style.display="block";clearTimeout(tmr);tmr=setTimeout(()=>e.style.display="none",2400)}
+function hdr(){return '<div class="top"><div class="lg"><span class="lgi">'+(CFG.logo?'<img src="'+esc(CFG.logo)+'" alt="">':'📚')+'</span><span class="brand">Best BD <i>Book</i></span></div><button class="sq" data-th>'+($("app").classList.contains("light")?"☀️":"🌙")+'</button></div>'}
+function hue(s){let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))%360;return h}
+function row(b,i){const pc=b.tot?Math.min(100,Math.floor((b.pg||0)*100/b.tot)):0;
+  return '<div class="row" data-b="'+i+'"><div class="cv" style="background:hsl('+hue(b.t)+',43%,38.5%)">'+esc(b.t[0]||"?").toUpperCase()+'</div><div class="mid"><div class="t">'+esc(b.t)+'</div><div class="s">'+(b.mb?bn(Number(b.mb).toFixed(1))+' MB  •  ':'')+'পৃষ্ঠা '+bn((b.pg||0)+' / '+(b.tot||"?"))+'</div><div class="pb"><i style="width:'+pc+'%"></i></div></div><button class="del" data-del="'+i+'">🗑</button></div>'}
+function lib(){const all=ls("bbb_downloads",[]);const f=all.map((b,i)=>[b,i]).filter(x=>x[0].t.toLowerCase().includes(q.toLowerCase()));
+  const cur=all.findIndex(b=>b.pg>0&&b.pg<b.tot);
+  return hdr()+'<div class="pad"><h1>'+(on?'📥 ডাউনলোড — ইন্টারনেট ছাড়াই পড়া যাবে':'📶 ইন্টারনেট নেই — আপনার ডাউনলোড করা বই পড়ুন')+'</h1>'+(on?'':'<button class="big" id="cache">🌐 সাইটের আগে দেখা হোম পেজ</button>')+'<input class="in" id="q" placeholder="🔍 বই খুঁজুন…" value="'+esc(q)+'">'+(q||cur<0?'':'<div class="lb">▶ পড়া চলছে</div>'+row(all[cur],cur))+(all.length?'<div class="lb">📚 সব ডাউনলোড</div>'+(f.length?f.map(x=>row(x[0],x[1])).join(""):'<div class="empty">কোনো বই মেলেনি</div>'):'<div class="empty">এখনো কোনো বই ডাউনলোড করা হয়নি</div>')+'</div>'}
+function me(){const u=ls("bbb_user",null);
+  const R=[["বই পড়া চলছে","bbb_reading",'<path d="M3 5.5C5 4.5 8 4.5 12 6.5c4-2 7-2 9-1V18c-2-1-5-1-9 1-4-2-7-2-9-1zM12 6.5V19"/>',"#42e8e0"],["ডাউনলোড","bbb_downloads",'<path d="M12 3v11m0 0-4.5-4.5M12 14l4.5-4.5M4 20h16"/>',"#4cc35f"],["পছন্দ","bbb_fav",'<path d="M12 20.5C6 16 3 12.8 3 9.3 3 6.8 4.9 5 7.2 5c1.9 0 3.7 1 4.8 2.8C13.1 6 14.9 5 16.8 5 19.1 5 21 6.8 21 9.3c0 3.5-3 6.7-9 11.2z"/>',"#b57cf0"],["বুকমার্ক","bbb_bmk",'<path d="M6 3h12v18l-6-4.5L6 21z"/>',"#f5b301"],["হিস্টরি","bbb_hist",'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',"#ff9f43"]];
+  return hdr()+'<div class="pad"><div class="av">'+esc(u&&u.name?u.name[0]:"?")+'</div><div class="hi">'+(u?'স্বাগতম, '+esc(u.name||""):'আপনি লগইন করেননি')+'</div><div class="ml">'+(u?esc(u.mobile||u.email||""):'লগইন করলে প্রোফাইল এখানে দেখাবে')+'</div><div class="am">'+R.map(r=>'<button class="ar" data-d="'+r[1]+'"><span class="ri" style="color:'+r[3]+'"><svg viewBox="0 0 24 24">'+r[2]+'</svg></span><span class="rt">'+r[0]+'</span><b class="rc">'+bn(ls(r[1],[]).length)+'</b><span class="rg">›</span></button>').join("")+'</div><button class="gh" id="lo">'+(u?'লগআউট':'লগইন করুন')+'</button></div>'}
+function menu(){
+  const A=[["home","🏠","হোম",0],["cats","📚","সকল ক্যাটাগরি",1],["auth","✍️","সকল লেখক",1],["comm","👥","কমিউনিটি কালেকশন",1]];
+  const P=[["contact","যোগাযোগ",'<rect x="4" y="6" width="16" height="12" rx="2.5"/><path d="m5 8 7 5 7-5"/>'],["about","আমাদের সম্পর্কে",'<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>'],["privacy","গোপনীয়তা নীতি",'<path d="M12 3.5 19 6v5.5c0 4.3-2.9 7.3-7 9-4.1-1.7-7-4.7-7-9V6z"/><path d="m9 12 2.2 2.2L15.2 10"/>'],["terms","শর্তাবলী",'<path d="M7 3.5h7l4 4V20.5H7z"/><path d="M14 3.5v4h4M9.5 12h6M9.5 15.5h6"/>']];
+  return hdr()+'<div class="pad" style="padding-top:18px"><div class="mcard"><div class="mh">ব্রাউজ করুন</div>'+A.map(a=>'<button class="mrow" data-a="'+a[0]+'"><span class="mi">'+a[1]+'</span><span class="mt">'+a[2]+'</span></button>').join("")+'</div><div class="mcard"><div class="mh">প্রয়োজনীয় পাতা</div>'+P.map(p=>'<button class="mrow" data-a="'+p[0]+'"><span class="mc"><svg viewBox="0 0 24 24">'+p[2]+'</svg></span><span class="mt">'+p[1]+'</span><span class="mg">›</span></button>').join("")+'</div></div>'}
+function draw(){
+  $("nav").innerHTML=NAV.map(n=>'<button data-t="'+n[0]+'" class="'+(n[0]==tab?"on":"")+'"><svg viewBox="0 0 24 24">'+IC[n[0]]+'</svg>'+n[1]+'</button>').join("");
+  document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>{tab=b.dataset.t;cached=false;draw()});
+  const s=$("s");let h,frame=false;
+  if(tab=="dl")h=lib();
+  else if(tab=="me")h=me();
+  else if(tab=="menu")h=menu();
+  else if(!on){
+    if(cached&&tab=="home"){const c=ls("bbb_home_cache",null);h=hdr()+(c?'<div class="pad"><div class="lb">📄 আগে দেখা কপি (ইন্টারনেট ছাড়া)</div></div>'+c:'<div class="pad"><div class="empty">আগে দেখা কোনো কপি নেই</div></div>')}
+    else h=lib();
+  }else{frame=true;h='<iframe src="'+esc(CFG.site+(tab=="search"?CFG.pages.search:""))+'" title="site"></iframe>'}
+  s.className="scr"+(frame?" fr":"");s.innerHTML=h;s.scrollTop=0;
+  document.querySelectorAll("[data-th]").forEach(b=>b.onclick=()=>{const l=$("app").classList.toggle("light");try{localStorage.setItem("bbb_light",JSON.stringify(l))}catch(e){}draw()});
+  document.querySelectorAll(".mrow").forEach(r=>r.onclick=()=>{const a=r.dataset.a;
+    if(a=="home"){tab="home";draw();return}
+    if(!on){toast("এটি খুলতে ইন্টারনেট দরকার");return}
+    const p=CFG.pages[a];if(p!=null&&p!=="")location.href=CFG.site+p;else toast("পেজের পথ CFG.pages-এ দিন")});
+  document.querySelectorAll(".ar").forEach(r=>r.onclick=()=>{if(r.dataset.d=="bbb_downloads"){tab="dl";draw()}});
+  document.querySelectorAll(".row").forEach(r=>r.onclick=e=>{
+    const all=ls("bbb_downloads",[]),i=+r.dataset.b;
+    if(e.target.dataset.del!=null){const b=all.splice(i,1)[0];try{localStorage.setItem("bbb_downloads",JSON.stringify(all))}catch(x){}BBB.remove(b);draw();return}
+    BBB.open(all[i])});
+  const lo=$("lo");if(lo)lo.onclick=()=>{
+    if(!ls("bbb_user",null)){if(on)BBB.login();else toast("লগইনের জন্য ইন্টারনেট দরকার");return}
+    if(!on){toast("লগআউটের জন্য ইন্টারনেট দরকার");return}
+    localStorage.removeItem("bbb_user");toast("লগআউট হয়েছে");draw()};
+  const c=$("cache");if(c)c.onclick=()=>{cached=true;tab="home";draw()};
+  const i=$("q");if(i)i.oninput=e=>{q=e.target.value;const p=e.target.selectionStart;draw();const n=$("q");n.focus();n.setSelectionRange(p,p)};
+}
+window.addEventListener("online",()=>{on=true;cached=false;toast("ইন্টারনেট ফিরেছে");draw()});
+window.addEventListener("offline",()=>{on=false;cached=false;if(tab=="home"||tab=="search")tab="home";toast("ইন্টারনেট নেই — মেনু, প্রোফাইল ও ডাউনলোড করা বই চালু আছে");draw()});
+draw();
+</script>
+</body>
+</html>
