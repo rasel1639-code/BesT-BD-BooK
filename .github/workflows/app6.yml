@@ -1,0 +1,2269 @@
+name: Build Best BD Book APK v2
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: "আপনার সাইটের ঠিকানা (যেমন https://yourname.blogspot.com)"
+        required: true
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.9"
+      - name: Create project files
+        env:
+          SITE_URL: ${{ github.event.inputs.site_url }}
+        run: |
+          mkdir -p .
+          cat > settings.gradle <<'EOF_0'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "BestBDBook"
+          include ':app'
+          EOF_0
+          mkdir -p .
+          cat > build.gradle <<'EOF_1'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
+          }
+          EOF_1
+          mkdir -p .
+          cat > gradle.properties <<'EOF_2'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          EOF_2
+          mkdir -p app
+          cat > app/build.gradle <<'EOF_3'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.bestbdbook.app'
+              signingConfigs {
+                  debug {
+                      storeFile file('bbb.jks')
+                      storePassword 'bbbstore'
+                      keyAlias 'bbb'
+                      keyPassword 'bbbstore'
+                  }
+              }
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.bestbdbook.app'
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+          }
+          EOF_3
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF_4'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <application
+                  android:label="Best BD Book"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
+                  android:largeHeap="true"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:screenOrientation="portrait"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF_4
+          mkdir -p app/src/main/java/com/bestbdbook/app
+          cat > app/src/main/java/com/bestbdbook/app/MainActivity.kt <<'EOF_5'
+          package com.bestbdbook.app
+
+          import android.app.Activity
+          import android.app.AlertDialog
+          import android.content.Context
+          import android.content.Intent
+          import android.content.res.ColorStateList
+          import android.graphics.Bitmap
+          import android.graphics.BitmapFactory
+          import android.graphics.Outline
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.graphics.ColorMatrixColorFilter
+          import android.graphics.drawable.GradientDrawable
+          import android.graphics.pdf.PdfRenderer
+          import android.net.ConnectivityManager
+          import android.net.Uri
+          import android.os.Bundle
+          import android.text.Editable
+          import android.text.TextWatcher
+          import android.text.style.ForegroundColorSpan
+          import android.os.ParcelFileDescriptor
+          import android.util.LruCache
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.view.ViewOutlineProvider
+          import android.webkit.CookieManager
+          import android.webkit.WebResourceError
+          import android.webkit.WebResourceRequest
+          import android.webkit.WebResourceResponse
+          import android.webkit.JsPromptResult
+          import android.webkit.WebChromeClient
+          import android.webkit.WebSettings
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import android.widget.AbsListView
+          import android.widget.BaseAdapter
+          import android.widget.Button
+          import android.widget.EditText
+          import android.widget.FrameLayout
+          import android.widget.HorizontalScrollView
+          import android.widget.ImageView
+          import android.widget.LinearLayout
+          import android.widget.ListView
+          import android.widget.ProgressBar
+          import android.widget.ScrollView
+          import android.widget.TextView
+          import android.widget.Toast
+          import java.io.File
+          import java.net.HttpURLConnection
+          import java.net.URL
+          import java.net.URLDecoder
+          import org.json.JSONObject
+          import org.json.JSONTokener
+
+          const val SITE = "__SITE_URL__"
+
+          class MainActivity : Activity() {
+              private lateinit var web: WebView
+              private lateinit var libView: ScrollView
+              private lateinit var libList: LinearLayout
+              private lateinit var reader: LinearLayout
+              private lateinit var holder: HorizontalScrollView
+              private lateinit var listV: ListView
+              private lateinit var pageT: TextView
+              private lateinit var zlT: TextView
+              private lateinit var rdTop: View
+              private lateinit var rdNav: View
+              private lateinit var rdFl: View
+              private var rdFs = false
+              private var snapMode = false
+              private var pageReady = false
+              @Volatile private var imgBusy = false
+              private val imgDir: File by lazy { File(filesDir, "imgs").also { it.mkdirs() } }
+              private var quietUntil = 0L
+              private val poller = object : Runnable {
+                  override fun run() {
+                      pollPrefs()
+                      web.postDelayed(this, 700)
+                  }
+              }
+              private val snapHome: File by lazy { File(filesDir, "snap_home.html") }
+              private val coverDir: File by lazy { File(filesDir, "covers").also { it.mkdirs() } }
+              private val coverCache = LruCache<String, Bitmap>(24)
+              private val META_JS = "(function(){try{var i=document.querySelector('.bk-cover img');var h=document.querySelector('h1.bk-title');var m=document.querySelector(\"meta[property='og:image']\");var im=i?(i.currentSrc||i.src):(m?m.content:'');var t=h?h.textContent.trim():(document.title||'');return JSON.stringify({t:t,i:im})}catch(e){return ''}})()"
+              private lateinit var bar: LinearLayout
+              private lateinit var navBtns: List<Button>
+              private val navTabs = listOf("home", "search", "dl", "me", "menu")
+              private val navNames = listOf("হোম", "সার্চ", "ডাউনলোড", "অ্যাকাউন্ট", "মেনু")
+              private val navColors = listOf("#4D9BFF", "#26C6B0", "#4CC35F", "#C26BE0", "#EEF3FB")
+              private val navIcons = listOf(R.drawable.ic_home, R.drawable.ic_search, R.drawable.ic_download, R.drawable.ic_me, R.drawable.ic_menu)
+              private val navColorsL = listOf("#1A73E8", "#00897B", "#2E7D32", "#9C27B0", "#12182B")
+              private var light = false
+              private var langEn = false
+              private val T_JS = """T={
+          home:["হোম","Home"],more:["আরও দেখুন","See more"],search:["সার্চ","Search"],fav:["পছন্দ","Favorites"],me:["অ্যাকাউন্ট","Account"],mnu:["মেনু","Menu"],install:["ডাউনলোড করুন","Download"],
+          find:["বই খুঁজুন","Find books"],newposts:["নতুন পোস্ট","New posts"],soon:["শীঘ্রই আসছে","Coming soon"],
+          ph:["বইয়ের নাম খুঁজুন...","Search book name..."],mcat:["ক্যাটাগরি","Categories"],all:["সব","All"],
+          fail:["বই লোড করা যায়নি","Could not load books"],allah:["আল্লাহু আকবর","Allahu Akbar"],loading:["বই লোড হচ্ছে...","Loading books..."],
+          login:["লগইন","Login"],register:["রেজিস্ট্রেশন","Register"],lname:["পুরো নাম","Full name"],lmobile:["মোবাইল নম্বর","Mobile number"],e_mobile:["সঠিক মোবাইল নম্বর দিন (যেমন 01XXXXXXXXX)","Enter a valid mobile number (e.g. 01XXXXXXXXX)"],e_nouser:["এই নম্বরে অ্যাকাউন্ট নেই, আগে রেজিস্ট্রেশন করুন","No account with this number. Please register first"],lemail:["ইমেইল","Email"],
+          lpass:["পাসওয়ার্ড","Password"],lpass2:["পাসওয়ার্ড আবার দিন","Confirm password"],dologin:["লগইন করুন","Log in"],
+          doreg:["অ্যাকাউন্ট তৈরি করুন","Create account"],tologin:["আগে থেকেই অ্যাকাউন্ট আছে? লগইন করুন","Already have an account? Log in"],
+          toreg:["অ্যাকাউন্ট নেই? রেজিস্ট্রেশন করুন","No account? Register"],welcome:["স্বাগতম","Welcome"],logout:["লগআউট","Log out"],
+          showpw:["পাসওয়ার্ড দেখান","Show password"],e_name:["নামে অন্তত ২টি অক্ষর দিন","Enter at least 2 characters for your name"],
+          e_email:["সঠিক ইমেইল দিন","Enter a valid email"],e_pw:["পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে","Password must be at least 6 characters"],
+          e_match:["দুটি পাসওয়ার্ড মিলছে না","Passwords do not match"],e_exists:["এই নম্বর দিয়ে আগেই অ্যাকাউন্ট আছে","An account with this number already exists"],
+          e_bad:["ইমেইল বা পাসওয়ার্ড ভুল","Incorrect email or password"],e_crypto:["এই ব্রাউজারে নিরাপদ পাসওয়ার্ড সুবিধা নেই","Secure password support is unavailable in this browser"],
+          ok_reg:["অ্যাকাউন্ট তৈরি হয়েছে","Account created"],ok_out:["লগআউট হয়েছে","Logged out"],dlp:["ডাউনলোড","Downloads"],lib:["পছন্দ","Favorites"],
+          hist:["হিস্টরি","History"],clear:["সব মুছুন","Clear all"],needlogin:["আগে লগইন করুন","Please log in first"],
+          added_lib:["পছন্দে যোগ হয়েছে","Added to favorites"],rm_lib:["পছন্দ থেকে সরানো হয়েছে","Removed from favorites"],
+          added_dl:["ডাউনলোড তালিকায় যোগ হয়েছে","Added to downloads"],
+          em_dl:["ডাউনলোড তালিকা খালি। বইয়ের পাতায় Download PDF চাপলে এখানে জমা হবে","No downloads yet. Tap Download PDF on a book page and it will appear here"],
+          em_lib:["পছন্দের তালিকা খালি। বইয়ের কভারের বুকমার্ক আইকনে চাপ দিন","No favorites yet. Tap the bookmark icon on a book cover"],
+          em_hist:["এখনো কোনো বই দেখা হয়নি","No books viewed yet"],bmk:["বুকমার্ক (পরে পড়ব)","Bookmarks (read later)"],rdl:["পড়া চলছে","Continue reading"],em_rd:["কোনো বই পড়া শুরু করেননি। বইয়ের পাতায় Read Online চাপুন","No books in progress. Tap Read Online on a book page"],pg:["পৃষ্ঠা","Page"],dldt:["ডাউনলোড:","Downloaded:"],em_bmk:["বুকমার্ক তালিকা খালি। বইয়ের পাতায় বুকমার্ক বাটনে চাপ দিন","No bookmarks yet. Tap Bookmark on a book page"],
+          m_browse:["ব্রাউজ করুন","Browse"],m_cats:["সকল ক্যাটাগরি","All categories"],m_auth:["সকল লেখক","All authors"],
+          m_comm:["কমিউনিটি কালেকশন","Community collection"],m_pages:["প্রয়োজনীয় পাতা","Important pages"],m_contact:["যোগাযোগ","Contact"],
+          m_about:["আমাদের সম্পর্কে","About us"],m_privacy:["গোপনীয়তা নীতি","Privacy policy"],m_terms:["শর্তাবলী","Terms & conditions"],
+          cp_title:["বইয়ের ধরণসমূহ","Book categories"],cp_sub:["আপনার পছন্দের বিষয়টি বেছে নিন","Choose a topic you like"],cp_browse:["ব্রাউজ করুন →","Browse →"],
+          auth_title:["লেখকগণ","Authors"],auth_sub:["আপনার পছন্দের লেখক বেছে নিন","Choose your favorite author"],
+          no_auth:["এখনো কোনো লেখক পাওয়া যায়নি। বইয়ের নাম 'বইয়ের নাম - লেখকের নাম' ভাবে লিখুন, অথবা লেবেলে 'লেখক: নাম' দিন","No authors yet. Name books like 'Book - Author' or add a label 'Author: Name'"]};var CATEN={"ইসলামিক":"Islamic","শিক্ষা":"Education","গল্প":"Stories","বিজ্ঞান":"Science","কবিতা":"Poetry","ইতিহাস":"History","জীবনী":"Biography","ইংরেজি":"English","শিশু":"Kids","রিভিউ":"Reviews","অন্যান্য":"Others"};var DEF_SLIDES=[
+          {a:["সবার জন্য","For everyone"],b:["একটি স্মার্ট ডিজিটাল লাইব্রেরী","A smart digital library"],s:["Read Online • Download PDF • Free Forever","Read Online • Download PDF • Free Forever"]},
+          {a:["নতুন বই","New books"],b:["প্রতিদিন আবিষ্কার করুন","Discover every day"],s:["ইসলামিক • শিক্ষা • গল্প • আরও অনেক কিছু","Islamic • Education • Stories • More"]},
+          {a:["যেখানেই থাকুন","Wherever you are"],b:["পড়ুন আপনার পছন্দের বই","Read your favorite books"],s:["Bangla • English • PDF","Bangla • English • PDF"]}];var DK=[["আল্লাহু আকবার","Allahu Akbar"],["সুবহানাল্লাহ","SubhanAllah"],["আলহামদুলিল্লাহ","Alhamdulillah"],["লা ইলাহা ইল্লাল্লাহ","La ilaha illallah"],["আস্তাগফিরুল্লাহ","Astaghfirullah"],["সুবহানাল্লাহি ওয়া বিহামদিহি","SubhanAllahi wa bihamdihi"],["লা হাওলা ওয়া লা কুওয়াতা ইল্লা বিল্লাহ","La hawla wa la quwwata illa billah"],["হাসবুনাল্লাহু ওয়া নি'মাল ওয়াকিল","Hasbunallahu wa ni'mal wakil"],["আল্লাহুম্মা সাল্লি আলা মুহাম্মাদ","Allahumma salli ala Muhammad"],["ইয়া আল্লাহ","Ya Allah"]]"""
+              private lateinit var rootV: LinearLayout
+              private var profList: String? = null
+              private var curTab = "home"
+              private var qText = ""
+              private var searchBox: EditText? = null
+              private var rowsBox: LinearLayout? = null
+              private var pdf: PdfRenderer? = null
+              private var pfd: ParcelFileDescriptor? = null
+              private var curFile: File? = null
+              private var curPage = 1
+              private var zoom = 1.0f
+              private var night = false
+              private var failed = false
+              private val cache = LruCache<Int, Bitmap>(3)
+              private val dir: File by lazy { File(filesDir, "books").also { it.mkdirs() } }
+              private val sp by lazy { getSharedPreferences("bbb", MODE_PRIVATE) }
+              private val siteHost: String by lazy { (Uri.parse(SITE).host ?: "").removePrefix("www.") }
+              private val nightF = ColorMatrixColorFilter(floatArrayOf(
+                  -1f, 0f, 0f, 0f, 255f,
+                  0f, -1f, 0f, 0f, 255f,
+                  0f, 0f, -1f, 0f, 255f,
+                  0f, 0f, 0f, 1f, 0f))
+              private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+              private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+
+              private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+              private fun toast(t: String) { Toast.makeText(this, t, Toast.LENGTH_LONG).show() }
+              private fun pageW(): Int = (resources.displayMetrics.widthPixels * zoom).toInt()
+              private fun tr(b: String, e: String): String = if (langEn) e else b
+
+              private fun bn(s: String): String {
+                  if (langEn) return s
+                  val sb = StringBuilder()
+                  for (ch in s) { sb.append(if (ch in '0'..'9') "০১২৩৪৫৬৭৮৯"[ch - '0'] else ch) }
+                  return sb.toString()
+              }
+
+              @Suppress("DEPRECATION")
+              private fun online(): Boolean {
+                  val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                  val n = cm.activeNetworkInfo
+                  return n != null && n.isConnected
+              }
+
+              private fun pressColor(): Int = if (light) 0x26000000 else 0x40FFFFFF
+
+              private fun rippleMask(r: Int): GradientDrawable {
+                  val m = GradientDrawable()
+                  m.setColor(Color.BLACK)
+                  m.cornerRadius = dp(r).toFloat()
+                  return m
+              }
+
+              private fun press(v: View, r: Int) {
+                  v.isClickable = true
+                  v.background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(pressColor()), v.background, rippleMask(r))
+              }
+
+              private fun rippleOnly(r: Int): android.graphics.drawable.RippleDrawable =
+                  android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(pressColor()), null, rippleMask(r))
+
+              private fun btn(t: String, f: () -> Unit): Button {
+                  val b = Button(this)
+                  b.text = t
+                  b.setTextColor(Color.WHITE)
+                  b.setBackgroundColor(Color.TRANSPARENT)
+                  press(b, 12)
+                  b.minWidth = 0
+                  b.minimumWidth = 0
+                  b.setPadding(dp(12), 0, dp(12), 0)
+                  b.setOnClickListener { f() }
+                  return b
+              }
+
+              override fun onCreate(b: Bundle?) {
+                  super.onCreate(b)
+                  light = sp.getBoolean("light", false)
+                  langEn = sp.getBoolean("en", false)
+                  night = sp.getBoolean("rn", false)
+                  val root = LinearLayout(this)
+                  root.orientation = LinearLayout.VERTICAL
+                  rootV = root
+                  root.setBackgroundColor(cBg())
+                  val frame = FrameLayout(this)
+                  web = WebView(this)
+                  libView = ScrollView(this)
+                  libView.visibility = View.GONE
+                  libView.setBackgroundColor(cBg())
+                  libList = LinearLayout(this)
+                  libList.orientation = LinearLayout.VERTICAL
+                  libList.setPadding(dp(12), dp(12), dp(12), dp(12))
+                  libView.addView(libList)
+                  reader = LinearLayout(this)
+                  reader.orientation = LinearLayout.VERTICAL
+                  reader.visibility = View.GONE
+                  frame.addView(web, FrameLayout.LayoutParams(MATCH, MATCH))
+                  frame.addView(libView, FrameLayout.LayoutParams(MATCH, MATCH))
+                  frame.addView(reader, FrameLayout.LayoutParams(MATCH, MATCH))
+                  root.addView(frame, LinearLayout.LayoutParams(MATCH, 0, 1f))
+                  bar = LinearLayout(this)
+                  bar.orientation = LinearLayout.HORIZONTAL
+                  val nb = ArrayList<Button>()
+                  for (i in 0 until 5) {
+                      val tn = navTabs[i]
+                      val b = nav { onNav(tn) }
+                      nb.add(b)
+                      bar.addView(b, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  }
+                  navBtns = nb
+                  bar.background = makeBarBg()
+                  root.addView(bar, LinearLayout.LayoutParams(MATCH, WRAP))
+                  setContentView(root)
+                  setupWeb()
+                  refreshBtn()
+                  goSite("home")
+              }
+
+              private fun nav(f: () -> Unit): Button {
+                  val b = btn("", f)
+                  b.textSize = 11f
+                  b.isAllCaps = false
+                  b.setPadding(0, dp(8), 0, dp(6))
+                  return b
+              }
+
+              private fun onNav(t: String) {
+                  if (t == "dl") tabLib() else goSite(t)
+              }
+
+              private fun refreshBtn() {
+                  for (i in 0 until 5) {
+                      val b = navBtns[i]
+                      val c = Color.parseColor(if (light) navColorsL[i] else navColors[i])
+                      b.text = if (langEn) listOf("Home", "Search", "Downloads", "Account", "Menu")[i] else navNames[i]
+                      val d = getDrawable(navIcons[i])!!.mutate()
+                      d.setTint(c)
+                      b.setCompoundDrawablesWithIntrinsicBounds(null, d, null, null)
+                      b.compoundDrawablePadding = dp(2)
+                      b.setTextColor(c)
+                      b.alpha = if (navTabs[i] == curTab) 1f else 0.62f
+                      b.background = rippleOnly(12)
+                  }
+              }
+
+              private fun isHome(): Boolean {
+                  if (snapMode) return false
+                  val u = web.url ?: return false
+                  val p = Uri.parse(u).path ?: ""
+                  val h = Uri.parse(u).host ?: ""
+                  return h.endsWith(siteHost) && (p == "" || p == "/")
+              }
+
+              private fun siteTab(t: String) {
+                  libView.visibility = View.GONE
+                  web.visibility = View.VISIBLE
+                  if (!online() && (t == "home" || t == "menu") && loadSnap(t)) return
+                  val wasSnap = snapMode
+                  snapMode = false
+                  web.settings.cacheMode = if (online()) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
+                  if (!wasSnap && isHome() && !failed) {
+                      web.evaluateJavascript("(function(){var b=document.querySelector('#bbb .nav-item[data-t=\"" + t + "\"]');if(b)b.click()})()", null)
+                  } else {
+                      failed = false
+                      web.loadUrl(if (t == "home") SITE else SITE.trimEnd('/') + "/#" + t)
+                  }
+              }
+
+              private fun goSite(t: String) {
+                  curTab = t
+                  if (online()) syncProfile()
+                  if (!online() && (t == "search" || t == "me")) {
+                      web.visibility = View.GONE
+                      libView.visibility = View.VISIBLE
+                      if (t == "me") {
+                          profList = null
+                          buildProfile()
+                      } else {
+                          buildLib()
+                          searchBox?.requestFocus()
+                      }
+                  } else {
+                      siteTab(t)
+                  }
+                  refreshBtn()
+              }
+
+              private fun tabLib() {
+                  curTab = "dl"
+                  web.visibility = View.GONE
+                  libView.visibility = View.VISIBLE
+                  buildLib()
+                  refreshBtn()
+              }
+
+              private fun syncProfile() {
+                  if (web.url == null) return
+                  val js = "(function(){try{var s=localStorage.getItem('bbb_sess');if(!s)return JSON.stringify({s:''});var u=(JSON.parse(localStorage.getItem('bbb_users')||'{}')||{})[s]||{};var d=JSON.parse(localStorage.getItem('bbb_data_'+s)||'{}')||{};var o={s:s,n:u.n||'',L:{}};['rd','dl','lib','bmk','hist'].forEach(function(k){var a=d[k]||[];o[k]=a.length;o.L[k]=a.slice(0,60).map(function(x){return{t:x.t||'',u:x.u||'',i:x.i||'',l:x.l||'',p:x.p||0,ts:x.ts||0}})});return JSON.stringify(o)}catch(e){return ''}})()"
+                  web.evaluateJavascript(js) { r ->
+                      try {
+                          if (r != null && r != "null") {
+                              val v = JSONTokener(r).nextValue()
+                              if (v is String && v.isNotEmpty()) {
+                                  sp.edit().putString("prof", v).apply()
+                                  profCache = null
+                                  cacheCovers()
+                              }
+                          }
+                      } catch (e: Exception) { }
+                  }
+              }
+
+              private fun injectCss(v: WebView) {
+                  val css = "html body #bbb .bottom-nav,html body #bbbp .bp-nav,html body #bbbp[data-bk] .bp-nav{display:none!important}html body #bbb,html body #bbbp,html body #bbb .acct,html body #bbb .mpg{padding-bottom:16px!important}html body *{-webkit-tap-highlight-color:rgba(120,160,255,.28)}html body #bbb button:active,html body #bbb a:active,html body #bbb [data-act]:active,html body #bbb [data-bu]:active,html body #bbbp button:active,html body #bbbp a:active{opacity:.72;transform:scale(.97)}"
+                  v.evaluateJavascript("(function(){if(document.getElementById('appcss')||!document.head)return;var s=document.createElement('style');s.id='appcss';s.textContent='" + css + "';document.head.appendChild(s)})()", null)
+              }
+
+              private fun setupWeb() {
+                  val s = web.settings
+                  s.javaScriptEnabled = true
+                  s.domStorageEnabled = true
+                  s.setSupportMultipleWindows(false)
+                  s.cacheMode = WebSettings.LOAD_DEFAULT
+                  CookieManager.getInstance().setAcceptCookie(true)
+                  web.webViewClient = object : WebViewClient() {
+                      override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
+                          val u = r.url
+                          if (u.scheme == "bbbapp") { handleApp(u); return true }
+                          val h = u.host ?: ""
+                          if (u.scheme == "http" || u.scheme == "https") {
+                              if (h.endsWith(siteHost) || h.contains("google.com") || h.contains("googleusercontent.com") || h.contains("blogger.com")) return false
+                          }
+                          try { startActivity(Intent(Intent.ACTION_VIEW, u)) } catch (e: Exception) { }
+                          return true
+                      }
+                      override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
+                          if (r.method == "GET" && !online()) {
+                              val u = r.url.toString()
+                              val f = File(imgDir, imgKey(u))
+                              if (f.exists()) {
+                                  val mf = File(imgDir, imgKey(u) + ".m")
+                                  val mime = if (mf.exists()) mf.readText() else "image/jpeg"
+                                  return WebResourceResponse(mime, null, f.inputStream())
+                              }
+                              val cf = File(coverDir, urlKey(u) + ".img")
+                              if (cf.exists()) return WebResourceResponse("image/jpeg", null, cf.inputStream())
+                          }
+                          return super.shouldInterceptRequest(v, r)
+                      }
+                      override fun onPageStarted(v: WebView, url: String?, f: Bitmap?) {
+                          super.onPageStarted(v, url, f)
+                          pageReady = false
+                          injectCss(v)
+                      }
+                      override fun onPageFinished(v: WebView, url: String?) {
+                          super.onPageFinished(v, url)
+                          injectCss(v)
+                          syncProfile()
+                          pageReady = true
+                          if (snapMode) {
+                              quietUntil = System.currentTimeMillis() + 2500
+                              snapJs(v)
+                              v.postDelayed({ if (snapMode) snapJs(v) }, 900)
+                          } else {
+                              quietUntil = System.currentTimeMillis() + 1800
+                              pushPrefs(v)
+                              if (isHome()) {
+                                  v.postDelayed({ captureHome() }, 6000)
+                                  v.postDelayed({ captureHome() }, 16000)
+                              }
+                          }
+                      }
+                      override fun onReceivedError(v: WebView, r: WebResourceRequest, e: WebResourceError) {
+                          if (r.isForMainFrame) {
+                              failed = true
+                              tabLib()
+                          }
+                      }
+                  }
+                  web.webChromeClient = object : WebChromeClient() {
+                      override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: JsPromptResult?): Boolean {
+                          if (message != null && message.startsWith("bbbapp://")) {
+                              handleApp(Uri.parse(message))
+                              result?.confirm("")
+                              return true
+                          }
+                          return super.onJsPrompt(view, url, message, defaultValue, result)
+                      }
+                  }
+                  web.setDownloadListener { url, ua, cd, mime, _ -> startDownload(url, ua, cd, mime) }
+              }
+
+              private fun fileName(cd: String?): String {
+                  var n = ""
+                  if (cd != null) {
+                      val m1 = Regex("filename\\*\\s*=\\s*[Uu][Tt][Ff]-8''([^;]+)").find(cd)
+                      if (m1 != null) {
+                          n = try { URLDecoder.decode(m1.groupValues[1].trim(), "UTF-8") } catch (e: Exception) { "" }
+                      }
+                      if (n.isEmpty()) {
+                          val m2 = Regex("filename\\s*=\\s*\"?([^\";]+)\"?").find(cd)
+                          if (m2 != null) n = m2.groupValues[1].trim()
+                      }
+                  }
+                  if (n.isEmpty()) n = "book-" + System.currentTimeMillis()
+                  n = n.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                  if (!n.lowercase().endsWith(".pdf")) n += ".pdf"
+                  return n
+              }
+
+              private fun startDownload(url: String, ua: String?, cd: String?, mime: String?) {
+                  toast("⬇️ ডাউনলোড শুরু হচ্ছে…")
+                  val pageUrl = web.url ?: ""
+                  web.evaluateJavascript(META_JS) { r ->
+                      var title = ""
+                      var img = ""
+                      try {
+                          if (r != null && r != "null") {
+                              val v = JSONTokener(r).nextValue()
+                              if (v is String && v.isNotEmpty()) {
+                                  val o = JSONObject(v)
+                                  title = o.optString("t")
+                                  img = o.optString("i")
+                              }
+                          }
+                      } catch (e: Exception) { }
+                      doDownload(url, ua, cd, pageUrl, title, img)
+                  }
+              }
+
+              private fun doDownload(url: String, ua: String?, cd: String?, pageUrl: String, title: String, img: String) {
+                  Thread {
+                      try {
+                          val c = URL(url).openConnection() as HttpURLConnection
+                          c.instanceFollowRedirects = true
+                          c.connectTimeout = 20000
+                          c.readTimeout = 60000
+                          if (ua != null) c.setRequestProperty("User-Agent", ua)
+                          val ck = CookieManager.getInstance().getCookie(url)
+                          if (ck != null) c.setRequestProperty("Cookie", ck)
+                          c.connect()
+                          if (c.responseCode !in 200..299) throw Exception("HTTP " + c.responseCode)
+                          val name = fileName(c.getHeaderField("Content-Disposition") ?: cd)
+                          val tmp = File(dir, "$name.part")
+                          c.inputStream.use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
+                          val head = ByteArray(5)
+                          tmp.inputStream().use { it.read(head) }
+                          if (String(head) != "%PDF-") { tmp.delete(); throw Exception("ফাইলটি PDF নয়") }
+                          val dest = File(dir, name)
+                          if (dest.exists()) dest.delete()
+                          tmp.renameTo(dest)
+                          val meta = JSONObject()
+                          meta.put("t", title)
+                          meta.put("i", img)
+                          meta.put("u", pageUrl)
+                          val ed = sp.edit().putString("m_" + name, meta.toString())
+                          val pth = (Uri.parse(pageUrl).path ?: "").trimEnd('/')
+                          if (pth.length > 1) ed.putString("u_" + pth, name)
+                          ed.apply()
+                          if (img.startsWith("http")) {
+                              try {
+                                  val cc = URL(img).openConnection() as HttpURLConnection
+                                  cc.connectTimeout = 15000
+                                  cc.readTimeout = 30000
+                                  cc.inputStream.use { i -> File(coverDir, name + ".img").outputStream().use { o -> i.copyTo(o) } }
+                              } catch (e: Exception) { }
+                          }
+                          coverCache.remove(name)
+                          runOnUiThread {
+                              toast("✅ সংরক্ষিত হয়েছে — “ডাউনলোড” পেজে অফলাইনে পড়তে পারবেন")
+                              refreshBtn()
+                              if (libView.visibility == View.VISIBLE) {
+                                  if (curTab == "me") buildProfile() else buildLib()
+                              }
+                          }
+                      } catch (e: Exception) {
+                          runOnUiThread { toast("❌ ডাউনলোড হয়নি: " + (e.message ?: "")) }
+                      }
+                  }.start()
+              }
+
+              private fun bookTitle(f: File): String {
+                  val m = sp.getString("m_" + f.name, null)
+                  if (m != null) {
+                      try {
+                          val t = JSONObject(m).optString("t")
+                          if (t.isNotEmpty()) return t
+                      } catch (e: Exception) { }
+                  }
+                  return f.name.removeSuffix(".pdf")
+              }
+
+              private fun forgetBook(f: File) {
+                  val m = sp.getString("m_" + f.name, null)
+                  val ed = sp.edit().remove("p_" + f.name).remove("t_" + f.name).remove("ts_" + f.name).remove("m_" + f.name)
+                  if (m != null) {
+                      try {
+                          val pth = (Uri.parse(JSONObject(m).optString("u")).path ?: "").trimEnd('/')
+                          if (pth.length > 1) ed.remove("u_" + pth)
+                      } catch (e: Exception) { }
+                  }
+                  ed.apply()
+                  File(coverDir, f.name + ".img").delete()
+                  coverCache.remove(f.name)
+              }
+
+              private var profCache: JSONObject? = null
+              @Volatile private var covBusy = false
+              private val snapMenu: File by lazy { File(filesDir, "snap_menu.html") }
+
+              private fun prof(): JSONObject? {
+                  if (profCache == null) {
+                      val raw = sp.getString("prof", "") ?: ""
+                      profCache = try { if (raw.isNotEmpty()) JSONObject(raw) else null } catch (e: Exception) { null }
+                  }
+                  return profCache
+              }
+
+              private fun hasAccDl(): Boolean {
+                  val a = prof()?.optJSONObject("L")?.optJSONArray("dl")
+                  return a != null && a.length() > 0
+              }
+
+              private fun pathOf(u: String): String = (Uri.parse(u).path ?: "").trimEnd('/')
+
+              private fun bookPath(f: File): String {
+                  val m = sp.getString("m_" + f.name, null) ?: return ""
+                  return try { pathOf(JSONObject(m).optString("u")) } catch (e: Exception) { "" }
+              }
+
+              private fun localFor(u: String): File? {
+                  val p = pathOf(u)
+                  if (p.length <= 1) return null
+                  val nm = sp.getString("u_" + p, null) ?: return null
+                  val f = File(dir, nm)
+                  return if (f.exists()) f else null
+              }
+
+              private fun labelFor(path: String): String {
+                  val L = prof()?.optJSONObject("L") ?: return ""
+                  for (k in listOf("dl", "lib", "hist", "bmk", "rd")) {
+                      val a = L.optJSONArray(k) ?: continue
+                      for (i in 0 until a.length()) {
+                          val e = a.optJSONObject(i) ?: continue
+                          if (pathOf(e.optString("u")) == path) {
+                              val l = e.optString("l")
+                              if (l.isNotEmpty()) return l
+                          }
+                      }
+                  }
+                  return ""
+              }
+
+              private fun authorOf(t: String, l: String): String {
+                  val m = Regex("^(?:লেখক|Author)\\s*[:：]\\s*(.+)$", RegexOption.IGNORE_CASE).find(l)
+                  if (m != null) return m.groupValues[1].trim()
+                  val parts = t.split(Regex("\\s+[-–—]\\s+"))
+                  if (parts.size >= 2) return parts.last().trim()
+                  return ""
+              }
+
+              private fun cleanTitle(t: String, l: String): String {
+                  if (Regex("^(?:লেখক|Author)\\s*[:：]", RegexOption.IGNORE_CASE).containsMatchIn(l)) return t
+                  val parts = t.split(Regex("\\s+[-–—]\\s+"))
+                  if (parts.size >= 2) return parts.dropLast(1).joinToString(" - ").trim()
+                  return t
+              }
+
+              private fun decodeCover(key: String): Bitmap? {
+                  val hit = coverCache.get(key)
+                  if (hit != null) return hit
+                  val cf = File(coverDir, key + ".img")
+                  if (!cf.exists()) return null
+                  return try {
+                      val o = BitmapFactory.Options()
+                      o.inJustDecodeBounds = true
+                      BitmapFactory.decodeFile(cf.path, o)
+                      var ss = 1
+                      while (o.outWidth / (ss * 2) >= dp(116)) ss *= 2
+                      val o2 = BitmapFactory.Options()
+                      o2.inSampleSize = ss
+                      val bm = BitmapFactory.decodeFile(cf.path, o2)
+                      if (bm != null) coverCache.put(key, bm)
+                      bm
+                  } catch (e: Throwable) {
+                      null
+                  }
+              }
+
+              private fun coverBmp(f: File): Bitmap? = decodeCover(f.name)
+
+              private fun urlKey(u: String): String = "u_" + Integer.toHexString(u.hashCode())
+
+              private fun urlCover(u: String): Bitmap? = if (u.isEmpty()) null else decodeCover(urlKey(u))
+
+              private fun cacheCovers() {
+                  if (covBusy) return
+                  val o = prof() ?: return
+                  val L = o.optJSONObject("L") ?: return
+                  val urls = LinkedHashSet<String>()
+                  for (k in listOf("dl", "lib", "rd", "bmk", "hist")) {
+                      val a = L.optJSONArray(k) ?: continue
+                      for (i in 0 until a.length()) {
+                          val e = a.optJSONObject(i) ?: continue
+                          val u = e.optString("i")
+                          if (u.startsWith("http")) urls.add(u)
+                      }
+                  }
+                  covBusy = true
+                  Thread {
+                      var n = 0
+                      for (u in urls) {
+                          if (n >= 120) break
+                          val f = File(coverDir, urlKey(u) + ".img")
+                          if (f.exists()) continue
+                          try {
+                              val cc = URL(u).openConnection() as HttpURLConnection
+                              cc.connectTimeout = 15000
+                              cc.readTimeout = 30000
+                              val tmp = File(coverDir, urlKey(u) + ".t")
+                              cc.inputStream.use { i -> tmp.outputStream().use { o2 -> i.copyTo(o2) } }
+                              tmp.renameTo(f)
+                              n++
+                          } catch (e: Exception) { }
+                      }
+                      covBusy = false
+                      if (n > 0) runOnUiThread {
+                          if (libView.visibility == View.VISIBLE) {
+                              if (curTab == "me") buildProfile() else if (curTab == "dl") buildLib()
+                          }
+                      }
+                  }.start()
+              }
+
+              private fun coverView(bmp: Bitmap?, title: String): View {
+                  if (bmp != null) {
+                      val iv = ImageView(this)
+                      iv.setImageBitmap(bmp)
+                      iv.scaleType = ImageView.ScaleType.CENTER_CROP
+                      iv.clipToOutline = true
+                      iv.outlineProvider = object : ViewOutlineProvider() {
+                          override fun getOutline(v: View, outline: Outline) { outline.setRoundRect(0, 0, v.width, v.height, dp(8).toFloat()) }
+                      }
+                      return iv
+                  }
+                  val cv = TextView(this)
+                  cv.text = title.trim().take(1).uppercase()
+                  cv.gravity = Gravity.CENTER
+                  cv.setTextColor(Color.WHITE)
+                  cv.textSize = 24f
+                  val hue = ((title.hashCode() and 0x7fffffff) % 360).toFloat()
+                  val cbg = GradientDrawable()
+                  cbg.setColor(Color.HSVToColor(floatArrayOf(hue, 0.6f, 0.55f)))
+                  cbg.cornerRadius = dp(8).toFloat()
+                  cv.background = cbg
+                  return cv
+              }
+
+              private fun openSiteUrl(u: String) {
+                  curTab = "home"
+                  snapMode = false
+                  failed = false
+                  web.settings.cacheMode = WebSettings.LOAD_DEFAULT
+                  libView.visibility = View.GONE
+                  web.visibility = View.VISIBLE
+                  web.loadUrl(u)
+                  refreshBtn()
+              }
+
+              private fun entryRow(e: JSONObject, key: String): View {
+                  val t0 = e.optString("t")
+                  val u = e.optString("u")
+                  val lab = e.optString("l")
+                  val au = authorOf(t0, lab)
+                  val title = cleanTitle(t0, lab)
+                  val loc = localFor(u)
+                  val bmp = (if (loc != null) coverBmp(loc) else null) ?: urlCover(e.optString("i"))
+                  val row = LinearLayout(this)
+                  row.orientation = LinearLayout.HORIZONTAL
+                  row.gravity = Gravity.CENTER_VERTICAL
+                  row.setPadding(dp(10), dp(10), dp(10), dp(10))
+                  row.background = boxBg(14, cPanel(), true)
+                  press(row, 14)
+                  row.addView(coverView(bmp, title), LinearLayout.LayoutParams(dp(58), dp(80)))
+                  val mid = LinearLayout(this)
+                  mid.orientation = LinearLayout.VERTICAL
+                  val t = TextView(this)
+                  t.text = title
+                  t.setTextColor(cTx())
+                  t.textSize = 14f
+                  t.maxLines = 2
+                  t.ellipsize = android.text.TextUtils.TruncateAt.END
+                  mid.addView(t)
+                  if (au.isNotEmpty()) {
+                      val at = TextView(this)
+                      at.text = "✍ " + au
+                      at.setTextColor(cMut())
+                      at.textSize = 12.5f
+                      at.maxLines = 1
+                      at.ellipsize = android.text.TextUtils.TruncateAt.END
+                      mid.addView(at)
+                  }
+                  val sb = StringBuilder()
+                  if (key == "rd" && e.optInt("p") > 0) {
+                      sb.append(tr("পৃষ্ঠা ", "Page ")).append(bn(e.optInt("p").toString()))
+                  } else if (key == "dl" && e.optLong("ts") > 0) {
+                      sb.append(tr("ডাউনলোড: ", "Downloaded: ")).append(bn(java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.US).format(java.util.Date(e.optLong("ts")))))
+                  } else if (au.isEmpty() && lab.isNotEmpty()) {
+                      sb.append(lab)
+                  }
+                  if (loc != null) {
+                      if (sb.isNotEmpty()) sb.append("  •  ")
+                      sb.append(tr("✓ ফোনে আছে", "✓ On this phone"))
+                  }
+                  if (sb.isNotEmpty()) {
+                      val sub = TextView(this)
+                      sub.text = sb.toString()
+                      sub.setTextColor(cMut())
+                      sub.textSize = 12f
+                      mid.addView(sub)
+                  }
+                  val ml = LinearLayout.LayoutParams(0, WRAP, 1f)
+                  ml.leftMargin = dp(12)
+                  row.addView(mid, ml)
+                  row.setOnClickListener {
+                      if (loc != null) openPdf(loc)
+                      else if (online() && u.startsWith("http")) openSiteUrl(u)
+                      else toast(tr("এই বইটি অফলাইনে নেই — ইন্টারনেট চালু করে খুলুন", "This book is not available offline — turn on internet to open it"))
+                  }
+                  return row
+              }
+
+              private fun imgKey(u: String): String = Integer.toHexString(u.hashCode()) + "_" + u.length
+
+              private fun cacheSnapAssets(html: String) {
+                  if (imgBusy) return
+                  val urls = LinkedHashSet<String>()
+                  val pats = listOf(
+                      Regex("(?:src|data-src|poster)=\"((?:https?:)?//[^\"]+)\""),
+                      Regex("<link[^>]*href=\"((?:https?:)?//[^\"]+\\.css[^\"]*)\""),
+                      Regex("url\\(['\"]?((?:https?:)?//[^)'\"]+)")
+                  )
+                  for (p in pats) {
+                      for (m in p.findAll(html)) {
+                          var u = m.groupValues[1].replace("&amp;", "&")
+                          if (u.startsWith("//")) u = "https:" + u
+                          urls.add(u)
+                      }
+                  }
+                  imgBusy = true
+                  Thread {
+                      var n = 0
+                      for (u in urls) {
+                          if (n >= 160) break
+                          val f = File(imgDir, imgKey(u))
+                          if (f.exists()) continue
+                          try {
+                              val cc = URL(u).openConnection() as HttpURLConnection
+                              cc.connectTimeout = 15000
+                              cc.readTimeout = 30000
+                              val tmp = File(imgDir, imgKey(u) + ".t")
+                              cc.inputStream.use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
+                              File(imgDir, imgKey(u) + ".m").writeText((cc.contentType ?: "image/jpeg").substringBefore(';').trim())
+                              tmp.renameTo(f)
+                              n++
+                          } catch (e: Exception) { }
+                      }
+                      imgBusy = false
+                  }.start()
+              }
+
+              private fun captureHome() {
+                  if (!online() || snapMode || !isHome()) return
+                  val js = "(function(){try{if(location.hash&&location.hash!=='#')return '';var c=document.documentElement.cloneNode(true);var x=c.querySelectorAll('script,noscript,iframe,#appcss');for(var i=0;i<x.length;i++){x[i].parentNode.removeChild(x[i])}var h='<!DOCTYPE html>'+c.outerHTML;var m=c.querySelector('#mpg');if(m)m.removeAttribute('hidden');var mm='<!DOCTYPE html>'+c.outerHTML;return JSON.stringify([h,mm])}catch(e){return ''}})()"
+                  web.evaluateJavascript(js) { r ->
+                      try {
+                          if (r != null && r != "null") {
+                              val v = JSONTokener(r).nextValue()
+                              if (v is String && v.length > 30000) {
+                                  val arr = org.json.JSONArray(v)
+                                  val h = arr.optString(0)
+                                  val m = arr.optString(1)
+                                  if (h.length > 30000) {
+                                      val first = !snapHome.exists()
+                                      snapHome.writeText(h)
+                                      cacheSnapAssets(h)
+                                      if (first) toast(tr("✓ অফলাইনের জন্য হোম পেজের কপি তৈরি হয়েছে", "✓ Home page saved for offline use"))
+                                  }
+                                  if (m.length > 30000) snapMenu.writeText(m)
+                              }
+                          }
+                      } catch (e: Exception) { }
+                  }
+              }
+
+              private fun loadSnap(t: String): Boolean {
+                  if (!snapHome.exists()) return false
+                  val useMenuFile = (t == "menu" && snapMenu.exists())
+                  var html = ""
+                  try { html = (if (useMenuFile) snapMenu else snapHome).readText() } catch (e: Exception) { return false }
+                  if (t == "menu" && !useMenuFile) html = html.replace(Regex("(<div[^>]*\\bid=\"mpg\"[^>]*?)\\s+hidden(=\"[^\"]*\")?"), "\$1")
+                  snapMode = true
+                  failed = false
+                  web.settings.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
+                  web.loadDataWithBaseURL(SITE.trimEnd('/') + "/", html, "text/html", "UTF-8", null)
+                  return true
+              }
+
+              private fun pushPrefs(v: WebView) {
+                  val js = "(function(){try{var x='" + (if (light) "1" else "0") + "',n='" + (if (langEn) "1" else "0") + "';var cx=localStorage.getItem('bbbt2')||'0',cn=localStorage.getItem('bbbl2')||'0';if(cx!==x||cn!==n){localStorage.setItem('bbbt2',x);localStorage.setItem('bbbl2',n);return 'r'}return ''}catch(e){return ''}})()"
+                  v.evaluateJavascript(js) { r ->
+                      if (r == "\"r\"") {
+                          quietUntil = System.currentTimeMillis() + 3500
+                          v.reload()
+                      }
+                  }
+              }
+
+              private fun pollPrefs() {
+                  if (!pageReady || web.visibility != View.VISIBLE || web.url == null) return
+                  if (System.currentTimeMillis() < quietUntil) return
+                  web.evaluateJavascript("(function(){try{if(!document.body)return '';return (document.body.classList.contains('lightm')?'1':'0')+(localStorage.getItem('bbbl2')==='1'?'1':'0')}catch(e){return ''}})()") { r ->
+                      if (r != null && r.length == 4 && System.currentTimeMillis() >= quietUntil) {
+                          val l = r[1] == '1'
+                          val e = r[2] == '1'
+                          if (l != light) setLight(l, false)
+                          if (e != langEn) setLangApp(e, false)
+                      }
+                  }
+              }
+
+              private fun snapJs(v: WebView) {
+                  val init = "window.__bbbInit={l:" + (if (langEn) "1" else "0") + ",t:" + (if (light) "1" else "0") + "};"
+                  val js = "(function(){" + init + "if(!window.__bbbs){window.__bbbs=1;var " + T_JS + ";" +
+                      "var PR={},PE={};var addP=function(b,e){if(b&&e&&b!==e){PR[b]=e;PE[e]=b}};" +
+                      "Object.keys(T).forEach(function(k){var v=T[k];if(v&&v.length===2)addP(v[0],v[1])});" +
+                      "DEF_SLIDES.forEach(function(s){['a','b','s'].forEach(function(k){var v=s[k];if(v&&v.length===2)addP(v[0],v[1])})});" +
+                      "DK.forEach(function(p){if(p&&p.length===2)addP(p[0],p[1])});" +
+                      "Object.keys(CATEN).forEach(function(k){addP(k,CATEN[k])});" +
+                      "var qa=function(s){return[].slice.call(document.querySelectorAll(s))};" +
+                      "var setL=function(n){qa('#bbb [data-i]').forEach(function(e){var t=T[e.getAttribute('data-i')];if(t)e.textContent=t[n]});" +
+                      "qa('#bbb *').forEach(function(e){if(e.children.length||e.hasAttribute('data-i')||/^(SCRIPT|STYLE)\$/.test(e.tagName))return;var x=(e.textContent||'').trim();if(!x)return;var m=n?PR[x]:PE[x];if(m)e.textContent=m});" +
+                      "var q=document.getElementById('q');if(q&&T.ph)q.placeholder=T.ph[n];" +
+                      "qa('#lang button').forEach(function(b){b.classList.toggle('on',Number(b.getAttribute('data-l'))===n)});" +
+                      "document.documentElement.lang=n?'en':'bn';try{localStorage.setItem('bbbl2',String(n))}catch(e){}};" +
+                      "var setT=function(x){var b=document.getElementById('bbb');if(b)b.classList.toggle('light',x);document.body.classList.toggle('lightm',x);try{localStorage.setItem('bbbt2',x?'1':'0')}catch(e){}};" +
+                      "window.__bbbApply=function(){setT(!!window.__bbbInit.t);setL(window.__bbbInit.l)};" +
+                      "document.addEventListener('click',function(e){" +
+                      "var lb=e.target.closest('#lang button[data-l]');if(lb){e.preventDefault();e.stopPropagation();setL(Number(lb.getAttribute('data-l')));return}" +
+                      "var th=e.target.closest('#themeBtn,#mpTheme,#cpTheme,#apTheme');if(th){e.preventDefault();e.stopPropagation();setT(!document.body.classList.contains('lightm'));return}" +
+                      "var m=e.target.closest('[data-act]');if(m){e.preventDefault();e.stopPropagation();prompt('bbbapp://tab/'+m.getAttribute('data-act'));return}" +
+                      "var c=e.target.closest('[data-bu]');var u=c?c.getAttribute('data-bu'):'';if(!u){var a=e.target.closest('a[href]');if(a)u=a.href}" +
+                      "if(u){e.preventDefault();e.stopPropagation();prompt('bbbapp://open?u='+encodeURIComponent(u))}},true)}" +
+                      "window.__bbbApply()})()"
+                  v.evaluateJavascript(js, null)
+              }
+
+              private fun handleApp(u: Uri) {
+                  val host = u.host ?: ""
+                  if (host == "tab") {
+                      val act = u.lastPathSegment ?: ""
+                      if (act.contains("home")) goSite("home")
+                      else if (act.contains("search")) goSite("search")
+                      else if (act.contains("down") || act == "dl") tabLib()
+                      else if (act.contains("acc") || act.contains("prof") || act == "me") goSite("me")
+                      else if (act.contains("theme") || act.contains("dark") || act.contains("light") || act.contains("night")) toggleTheme()
+                      else if (act.contains("lang")) setLangApp(!langEn, true)
+                      else toast(tr("এই অপশনের জন্য ইন্টারনেট দরকার", "This option needs internet"))
+                  } else if (host == "lang") {
+                      val en = (u.lastPathSegment == "1")
+                      if (en != langEn) setLangApp(en, false)
+                  } else if (host == "theme") {
+                      val l = (u.lastPathSegment == "1")
+                      if (l != light) setLight(l, false)
+                  } else if (host == "open") {
+                      val target = u.getQueryParameter("u") ?: ""
+                      val pth = (Uri.parse(target).path ?: "").trimEnd('/')
+                      val nm = if (pth.length > 1) sp.getString("u_" + pth, null) else null
+                      val f = if (nm != null) File(dir, nm) else null
+                      if (f != null && f.exists()) openPdf(f) else toast("এই বইটি ডাউনলোড করা নেই — ইন্টারনেট চালু করে খুলুন")
+                  }
+              }
+
+              private fun files(): List<File> {
+                  val l = dir.listFiles { f -> f.name.endsWith(".pdf") } ?: return emptyList()
+                  return l.sortedByDescending { it.lastModified() }
+              }
+
+              private fun cBg(): Int = Color.parseColor(if (light) "#F4F7FC" else "#0B1020")
+              private fun cPanel(): Int = Color.parseColor(if (light) "#FFFFFF" else "#141B30")
+              private fun cTx(): Int = Color.parseColor(if (light) "#12182B" else "#F4F6FF")
+              private fun cMut(): Int = Color.parseColor(if (light) "#5B6785" else "#AAB4D0")
+              private fun cLine(): Int = Color.parseColor(if (light) "#E2E5EC" else "#212634")
+
+              private fun boxBg(r: Int, fill: Int, stroke: Boolean): GradientDrawable {
+                  val g = GradientDrawable()
+                  g.setColor(fill)
+                  g.cornerRadius = dp(r).toFloat()
+                  if (stroke) g.setStroke(dp(1), cLine())
+                  return g
+              }
+
+              private fun makeBarBg(): GradientDrawable {
+                  val g = GradientDrawable()
+                  g.setColor(if (light) Color.WHITE else Color.parseColor("#0C1122"))
+                  g.setStroke(dp(1), cLine())
+                  val rr = dp(18).toFloat()
+                  g.cornerRadii = floatArrayOf(rr, rr, rr, rr, 0f, 0f, 0f, 0f)
+                  return g
+              }
+
+              private fun toggleTheme() {
+                  setLight(!light, true)
+              }
+
+              private fun setLight(v: Boolean, push: Boolean) {
+                  light = v
+                  sp.edit().putBoolean("light", light).apply()
+                  rootV.setBackgroundColor(cBg())
+                  libView.setBackgroundColor(cBg())
+                  bar.background = makeBarBg()
+                  if (push && web.url != null) {
+                      web.evaluateJavascript("try{var x=" + (if (light) "true" else "false") + ";var b=document.getElementById('bbb');if(b)b.classList.toggle('light',x);var p=document.getElementById('bbbp');if(p)p.className=x?'light':'';document.body.classList.toggle('lightm',x);localStorage.setItem('bbbt2',x?'1':'0')}catch(e){}", null)
+                  }
+                  refreshBtn()
+                  if (libView.visibility == View.VISIBLE) {
+                      if (curTab == "me") buildProfile() else buildLib()
+                  }
+              }
+
+              private fun setLangApp(en: Boolean, push: Boolean) {
+                  langEn = en
+                  sp.edit().putBoolean("en", en).apply()
+                  if (push && web.url != null) {
+                      web.evaluateJavascript("try{var n=" + (if (en) "1" else "0") + ";var b=document.querySelector('#lang button[data-l=\"'+n+'\"]');if(b){if(!b.classList.contains('on'))b.click()}else{localStorage.setItem('bbbl2',n)}}catch(e){}", null)
+                  }
+                  refreshBtn()
+                  if (libView.visibility == View.VISIBLE) {
+                      if (curTab == "me") buildProfile() else buildLib()
+                  }
+              }
+
+              private fun askDelete(f: File) {
+                  AlertDialog.Builder(this)
+                      .setMessage("“" + bookTitle(f) + "” মুছে ফেলবেন?")
+                      .setPositiveButton("মুছুন") { _, _ ->
+                          f.delete()
+                          forgetBook(f)
+                          buildLib()
+                          refreshBtn()
+                      }
+                      .setNegativeButton("না", null)
+                      .show()
+              }
+
+              private fun label(t: String): TextView {
+                  val l = TextView(this)
+                  l.text = t
+                  l.setTextColor(cMut())
+                  l.textSize = 13f
+                  l.setPadding(0, dp(6), 0, dp(8))
+                  return l
+              }
+
+              private fun rowLp(): LinearLayout.LayoutParams {
+                  val lp = LinearLayout.LayoutParams(MATCH, WRAP)
+                  lp.bottomMargin = dp(10)
+                  return lp
+              }
+
+              private fun bookRow(f: File): View {
+                  val rawT = bookTitle(f)
+                  val bpath = bookPath(f)
+                  val lab = if (bpath.length > 1) labelFor(bpath) else ""
+                  val au = authorOf(rawT, lab)
+                  val title = cleanTitle(rawT, lab)
+                  val pg = sp.getInt("p_" + f.name, 0)
+                  val tot = sp.getInt("t_" + f.name, 0)
+                  val pct = if (tot > 0 && pg > 0) pg * 100 / tot else 0
+                  val mb = String.format("%.1f", f.length() / 1048576.0)
+                  val row = LinearLayout(this)
+                  row.orientation = LinearLayout.HORIZONTAL
+                  row.gravity = Gravity.CENTER_VERTICAL
+                  row.setPadding(dp(10), dp(10), dp(10), dp(10))
+                  row.background = boxBg(14, cPanel(), true)
+                  press(row, 14)
+                  val bmp = coverBmp(f)
+                  val cvv: View
+                  if (bmp != null) {
+                      val iv = ImageView(this)
+                      iv.setImageBitmap(bmp)
+                      iv.scaleType = ImageView.ScaleType.CENTER_CROP
+                      iv.clipToOutline = true
+                      iv.outlineProvider = object : ViewOutlineProvider() {
+                          override fun getOutline(v: View, outline: Outline) { outline.setRoundRect(0, 0, v.width, v.height, dp(8).toFloat()) }
+                      }
+                      cvv = iv
+                  } else {
+                      val cv = TextView(this)
+                      cv.text = title.trim().take(1).uppercase()
+                      cv.gravity = Gravity.CENTER
+                      cv.setTextColor(Color.WHITE)
+                      cv.textSize = 24f
+                      val hue = ((title.hashCode() and 0x7fffffff) % 360).toFloat()
+                      val cbg = GradientDrawable()
+                      cbg.setColor(Color.HSVToColor(floatArrayOf(hue, 0.6f, 0.55f)))
+                      cbg.cornerRadius = dp(8).toFloat()
+                      cv.background = cbg
+                      cvv = cv
+                  }
+                  row.addView(cvv, LinearLayout.LayoutParams(dp(58), dp(80)))
+                  val mid = LinearLayout(this)
+                  mid.orientation = LinearLayout.VERTICAL
+                  val t = TextView(this)
+                  t.text = title
+                  t.setTextColor(cTx())
+                  t.textSize = 14f
+                  t.maxLines = 2
+                  t.ellipsize = android.text.TextUtils.TruncateAt.END
+                  val sub = TextView(this)
+                  sub.text = bn(mb) + " MB" + (if (pg > 1 && tot > 0) tr("  •  পৃষ্ঠা ", "  •  Page ") + bn("$pg / $tot") else "")
+                  sub.setTextColor(cMut())
+                  sub.textSize = 12f
+                  val pb = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
+                  pb.max = 100
+                  pb.progress = pct
+                  pb.progressTintList = ColorStateList.valueOf(Color.parseColor("#FFC43D"))
+                  pb.progressBackgroundTintList = ColorStateList.valueOf(cLine())
+                  mid.addView(t)
+                  if (au.isNotEmpty()) {
+                      val at = TextView(this)
+                      at.text = "✍ " + au
+                      at.setTextColor(cMut())
+                      at.textSize = 12.5f
+                      at.maxLines = 1
+                      at.ellipsize = android.text.TextUtils.TruncateAt.END
+                      mid.addView(at)
+                  }
+                  mid.addView(sub)
+                  val pbl = LinearLayout.LayoutParams(MATCH, dp(6))
+                  pbl.topMargin = dp(8)
+                  mid.addView(pb, pbl)
+                  val ml = LinearLayout.LayoutParams(0, WRAP, 1f)
+                  ml.leftMargin = dp(12)
+                  row.addView(mid, ml)
+                  val del = btn("\uD83D\uDDD1") { askDelete(f) }
+                  del.setTextColor(cTx())
+                  row.addView(del)
+                  row.setOnClickListener { openPdf(f) }
+                  row.setOnLongClickListener { askDelete(f); true }
+                  return row
+              }
+
+              private fun fillRows() {
+                  val box = rowsBox ?: return
+                  box.removeAllViews()
+                  val q = qText.trim().lowercase()
+                  val all = files()
+                  val shown = all.filter { q.isEmpty() || bookTitle(it).lowercase().contains(q) || it.name.lowercase().contains(q) }
+                  var any = false
+                  if (q.isEmpty()) {
+                      val cont = all.filter { sp.getInt("p_" + it.name, 0) > 1 }.sortedByDescending { sp.getLong("ts_" + it.name, 0L) }.take(3)
+                      if (cont.isNotEmpty()) {
+                          box.addView(label(tr("▶ পড়া চলছে", "▶ Continue reading")))
+                          for (f in cont) box.addView(bookRow(f), rowLp())
+                          any = true
+                      }
+                      if (all.isNotEmpty()) box.addView(label(tr("\uD83D\uDCDA সব ডাউনলোড", "\uD83D\uDCDA All downloads")))
+                  }
+                  for (f in shown) {
+                      box.addView(bookRow(f), rowLp())
+                      any = true
+                  }
+                  val arr = prof()?.optJSONObject("L")?.optJSONArray("dl")
+                  if (arr != null) {
+                      val rest = ArrayList<JSONObject>()
+                      for (i in 0 until arr.length()) {
+                          val e = arr.optJSONObject(i) ?: continue
+                          val tt = e.optString("t")
+                          if (tt.isEmpty() || localFor(e.optString("u")) != null) continue
+                          if (q.isNotEmpty() && !tt.lowercase().contains(q)) continue
+                          rest.add(e)
+                      }
+                      if (rest.isNotEmpty()) {
+                          box.addView(label(tr("☁ অ্যাকাউন্টের ডাউনলোড তালিকা", "☁ Account download list")))
+                          for (e in rest) box.addView(entryRow(e, "dl"), rowLp())
+                          any = true
+                      }
+                  }
+                  if (!any) box.addView(label(tr("কোনো বই মেলেনি", "No books found")))
+              }
+
+              private fun brandHeader(): View {
+                  val row = LinearLayout(this)
+                  row.orientation = LinearLayout.HORIZONTAL
+                  row.gravity = Gravity.CENTER_VERTICAL
+                  row.setPadding(0, 0, 0, dp(14))
+                  val logo = ImageView(this)
+                  logo.setImageResource(if (light) R.drawable.logo_l else R.drawable.logo_d)
+                  logo.adjustViewBounds = true
+                  row.addView(logo, LinearLayout.LayoutParams(WRAP, dp(38)))
+                  val br = TextView(this)
+                  val sps = android.text.SpannableString("Best BD Book")
+                  sps.setSpan(ForegroundColorSpan(0xFF5AA2FF.toInt()), 0, 8, 0)
+                  sps.setSpan(ForegroundColorSpan(0xFF4ADE80.toInt()), 8, 12, 0)
+                  br.text = sps
+                  br.typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+                  br.textSize = 17f
+                  br.setPadding(dp(8), 0, 0, 0)
+                  row.addView(br, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  val lgb = TextView(this)
+                  lgb.text = if (langEn) "বাংলা" else "EN"
+                  lgb.gravity = Gravity.CENTER
+                  lgb.setTextColor(cTx())
+                  lgb.textSize = 12f
+                  lgb.typeface = Typeface.DEFAULT_BOLD
+                  lgb.background = boxBg(12, cPanel(), true)
+                  press(lgb, 12)
+                  lgb.setOnClickListener { setLangApp(!langEn, true) }
+                  val llp = LinearLayout.LayoutParams(dp(52), dp(40))
+                  llp.rightMargin = dp(8)
+                  row.addView(lgb, llp)
+                  val tb = ImageView(this)
+                  val ic = getDrawable(if (light) R.drawable.ic_moon else R.drawable.ic_sun)!!.mutate()
+                  ic.setTint(cTx())
+                  tb.setImageDrawable(ic)
+                  tb.setPadding(dp(10), dp(10), dp(10), dp(10))
+                  tb.background = boxBg(12, cPanel(), true)
+                  press(tb, 12)
+                  tb.setOnClickListener { toggleTheme() }
+                  row.addView(tb, LinearLayout.LayoutParams(dp(40), dp(40)))
+                  return row
+              }
+
+              private fun infoCard(): View {
+                  val c = LinearLayout(this)
+                  c.orientation = LinearLayout.VERTICAL
+                  c.setPadding(dp(14), dp(12), dp(14), dp(12))
+                  c.background = boxBg(14, cPanel(), true)
+                  val t = TextView(this)
+                  t.text = tr("\uD83D\uDCF6 অফলাইন সম্পর্কে", "\uD83D\uDCF6 About offline")
+                  t.setTextColor(cTx())
+                  t.textSize = 14f
+                  t.typeface = Typeface.DEFAULT_BOLD
+                  c.addView(t)
+                  val b = TextView(this)
+                  b.text = tr("• সাইটে বইয়ের “ডাউনলোড” চাপলে বইটি এই ফোনে জমা হয়।\n• জমা হওয়া বই ইন্টারনেট ছাড়াই পড়া যায়। যেখানে থেমেছিলেন সেখান থেকে আবার শুরু হয়।\n• অফলাইনে এখানকার সার্চ শুধু ডাউনলোড করা বইয়ের মধ্যে খোঁজে।\n• সাইটের হোম ও মেনু আগে দেখা কপি থেকে খুলতে পারে। নতুন বই বা পেজ দেখতে ইন্টারনেট লাগে।\n• অ্যাপ মুছলে বা অ্যাপের ডেটা ক্লিয়ার করলে ডাউনলোড করা বই চলে যায়।", "• Tap “Download” on a book in the site to save it on this phone.\n• Saved books open without internet and resume from where you stopped.\n• Offline, search here only looks inside your downloaded books.\n• The site's Home and Menu may open from a saved copy. New books or pages need internet.\n• Uninstalling the app or clearing its data deletes downloaded books.")
+                  b.setTextColor(cMut())
+                  b.textSize = 12.5f
+                  b.setLineSpacing(dp(3).toFloat(), 1f)
+                  b.setPadding(0, dp(6), 0, 0)
+                  c.addView(b)
+                  return c
+              }
+
+              private fun buildLib() {
+                  libList.removeAllViews()
+                  libList.addView(brandHeader())
+                  libList.addView(infoCard(), rowLp())
+                  val h = TextView(this)
+                  h.text = tr("\uD83D\uDCE5 ডাউনলোড করা বই", "\uD83D\uDCE5 Downloaded books")
+                  h.setTextColor(cTx())
+                  h.textSize = 15f
+                  h.typeface = Typeface.DEFAULT_BOLD
+                  h.setPadding(0, dp(4), 0, dp(10))
+                  libList.addView(h)
+                  if (files().isEmpty() && !hasAccDl()) {
+                      val e = TextView(this)
+                      e.text = tr("এখনো কোনো বই ডাউনলোড করা হয়নি।\n\nইন্টারনেট চালু করে সাইট থেকে কোনো বইয়ের ডাউনলোড বাটন চাপুন — বইটি এখানে জমা হবে।", "No books downloaded yet.\n\nTurn on internet and tap a book's download button on the site — it will be saved here.")
+                      e.setTextColor(cMut())
+                      e.textSize = 15f
+                      e.setPadding(0, dp(20), 0, 0)
+                      libList.addView(e)
+                      return
+                  }
+                  val sb = EditText(this)
+                  sb.hint = tr("\uD83D\uDD0D বই খুঁজুন…", "\uD83D\uDD0D Find books…")
+                  sb.setText(qText)
+                  sb.setTextColor(cTx())
+                  sb.setHintTextColor(cMut())
+                  sb.setSingleLine()
+                  sb.setPadding(dp(14), dp(10), dp(14), dp(10))
+                  sb.background = boxBg(12, cPanel(), true)
+                  sb.addTextChangedListener(object : TextWatcher {
+                      override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { }
+                      override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { }
+                      override fun afterTextChanged(s: Editable?) {
+                          qText = s?.toString() ?: ""
+                          fillRows()
+                      }
+                  })
+                  searchBox = sb
+                  libList.addView(sb, rowLp())
+                  val rb = LinearLayout(this)
+                  rb.orientation = LinearLayout.VERTICAL
+                  rowsBox = rb
+                  libList.addView(rb)
+                  fillRows()
+              }
+
+              private fun card(t: String): TextView {
+                  val tv = TextView(this)
+                  tv.text = t
+                  tv.setTextColor(cTx())
+                  tv.textSize = 14f
+                  tv.setPadding(dp(14), dp(12), dp(14), dp(12))
+                  tv.background = boxBg(12, cPanel(), true)
+                  return tv
+              }
+
+              private fun buildProfile() {
+                  libList.removeAllViews()
+                  val keys = listOf("rd", "dl", "lib", "bmk", "hist")
+                  val names = if (langEn) listOf("Continue reading", "Downloads", "Library", "Bookmarks", "History") else listOf("পড়া চলছে", "ডাউনলোড", "লাইব্রেরী", "বুকমার্ক", "হিস্টরি")
+                  val icons = listOf(R.drawable.ic_r_rd, R.drawable.ic_r_dl, R.drawable.ic_r_lib, R.drawable.ic_r_bmk, R.drawable.ic_r_hist)
+                  val pl = profList
+                  val top = LinearLayout(this)
+                  top.orientation = LinearLayout.HORIZONTAL
+                  top.gravity = Gravity.CENTER_VERTICAL
+                  top.setPadding(0, 0, 0, dp(18))
+                  val x = TextView(this)
+                  x.text = if (pl == null) "✕" else "←"
+                  x.gravity = Gravity.CENTER
+                  x.setTextColor(cTx())
+                  x.textSize = 18f
+                  x.background = boxBg(12, cPanel(), true)
+                  press(x, 12)
+                  x.setOnClickListener {
+                      if (profList != null) { profList = null; buildProfile() } else goSite("home")
+                  }
+                  top.addView(x, LinearLayout.LayoutParams(dp(40), dp(40)))
+                  val ttl = TextView(this)
+                  ttl.text = if (pl == null) tr("অ্যাকাউন্ট", "Account") else names[keys.indexOf(pl)]
+                  ttl.gravity = Gravity.CENTER
+                  ttl.setTextColor(cTx())
+                  ttl.textSize = 18f
+                  ttl.typeface = Typeface.DEFAULT_BOLD
+                  top.addView(ttl, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  top.addView(View(this), LinearLayout.LayoutParams(dp(40), dp(40)))
+                  libList.addView(top)
+                  val raw = sp.getString("prof", "") ?: ""
+                  val o: JSONObject? = try { if (raw.isNotEmpty()) JSONObject(raw) else null } catch (e: Exception) { null }
+                  if (o == null || o.optString("s").isEmpty()) {
+                      val c0 = card(tr("\uD83D\uDC64 আপনি লগইন করেননি।\n\nলগইন করতে একবার ইন্টারনেট চালু করে “অ্যাকাউন্ট” চাপুন।", "\uD83D\uDC64 You are not logged in.\n\nTo log in, turn on internet once and tap “Account”."))
+                      libList.addView(c0)
+                      return
+                  }
+                  if (pl != null) {
+                      val arr = o.optJSONObject("L")?.optJSONArray(pl)
+                      var n = 0
+                      if (arr != null) {
+                          for (i in 0 until arr.length()) {
+                              val e = arr.optJSONObject(i) ?: continue
+                              if (e.optString("t").isEmpty()) continue
+                              libList.addView(entryRow(e, pl), rowLp())
+                              n++
+                          }
+                      }
+                      if (n == 0) libList.addView(label(tr("তালিকা ফাঁকা বা এখনো জমানো হয়নি", "This list is empty or not saved yet")))
+                      return
+                  }
+                  val name = o.optString("n")
+                  val box = LinearLayout(this)
+                  box.orientation = LinearLayout.VERTICAL
+                  box.setPadding(dp(16), dp(18), dp(16), dp(18))
+                  box.background = boxBg(18, cPanel(), true)
+                  val av = TextView(this)
+                  av.text = name.trim().take(1).uppercase()
+                  av.gravity = Gravity.CENTER
+                  av.setTextColor(Color.WHITE)
+                  av.textSize = 36f
+                  av.typeface = Typeface.DEFAULT_BOLD
+                  val abg = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFFFED787.toInt(), 0xFFF47F8B.toInt(), 0xFF805CF3.toInt()))
+                  abg.shape = GradientDrawable.OVAL
+                  av.background = abg
+                  val alp = LinearLayout.LayoutParams(dp(84), dp(84))
+                  alp.gravity = Gravity.CENTER_HORIZONTAL
+                  alp.topMargin = dp(6)
+                  alp.bottomMargin = dp(14)
+                  box.addView(av, alp)
+                  val hello = TextView(this)
+                  hello.text = tr("স্বাগতম, ", "Welcome, ") + name
+                  hello.gravity = Gravity.CENTER
+                  hello.setTextColor(cTx())
+                  hello.textSize = 18f
+                  hello.typeface = Typeface.DEFAULT_BOLD
+                  box.addView(hello)
+                  val mail = TextView(this)
+                  mail.text = o.optString("s")
+                  mail.gravity = Gravity.CENTER
+                  mail.setTextColor(cMut())
+                  mail.textSize = 14f
+                  mail.setPadding(0, dp(4), 0, dp(22))
+                  box.addView(mail)
+                  val menu = LinearLayout(this)
+                  menu.orientation = LinearLayout.VERTICAL
+                  menu.background = boxBg(14, Color.TRANSPARENT, true)
+                  for (i in 0 until 5) {
+                      val row = LinearLayout(this)
+                      row.orientation = LinearLayout.HORIZONTAL
+                      row.gravity = Gravity.CENTER_VERTICAL
+                      row.setPadding(dp(12), dp(13), dp(12), dp(13))
+                      press(row, 0)
+                      val ib = ImageView(this)
+                      val d = getDrawable(icons[i])!!.mutate()
+                      d.setTint(cTx())
+                      ib.setImageDrawable(d)
+                      ib.setPadding(dp(8), dp(8), dp(8), dp(8))
+                      ib.background = boxBg(11, cBg(), false)
+                      row.addView(ib, LinearLayout.LayoutParams(dp(36), dp(36)))
+                      val rt = TextView(this)
+                      rt.text = names[i]
+                      rt.setTextColor(cTx())
+                      rt.textSize = 15f
+                      rt.typeface = Typeface.DEFAULT_BOLD
+                      rt.setPadding(dp(12), 0, 0, 0)
+                      row.addView(rt, LinearLayout.LayoutParams(0, WRAP, 1f))
+                      val rc = TextView(this)
+                      rc.text = bn(o.optInt(keys[i]).toString())
+                      rc.setTextColor(cMut())
+                      rc.textSize = 13f
+                      row.addView(rc)
+                      val rg = TextView(this)
+                      rg.text = "  ›"
+                      rg.setTextColor(cMut())
+                      rg.textSize = 18f
+                      row.addView(rg)
+                      val key = keys[i]
+                      row.setOnClickListener {
+                          if (key == "dl") tabLib() else { profList = key; buildProfile() }
+                      }
+                      menu.addView(row)
+                      if (i < 4) {
+                          val dv = View(this)
+                          dv.setBackgroundColor(cLine())
+                          menu.addView(dv, LinearLayout.LayoutParams(MATCH, dp(1)))
+                      }
+                  }
+                  box.addView(menu)
+                  libList.addView(box)
+              }
+
+              private fun rBg(): Int = if (night) 0xFF05070D.toInt() else cBg()
+              private fun rPanel(): Int = if (night) 0xFF0F1424.toInt() else cPanel()
+              private fun rTx(): Int = if (night) 0xFFE8ECFF.toInt() else cTx()
+              private fun rLine(): Int = if (night) 0xFF1B2238.toInt() else cLine()
+
+              private fun rBox(): GradientDrawable {
+                  val g = GradientDrawable()
+                  g.setColor(rBg())
+                  g.cornerRadius = dp(10).toFloat()
+                  g.setStroke(dp(1), rLine())
+                  return g
+              }
+
+              private fun navItem(ic: String, lb: String, col: Int, f: () -> Unit): TextView {
+                  val t = TextView(this)
+                  if (lb.isEmpty()) {
+                      t.text = ic
+                  } else {
+                      val ss = android.text.SpannableString(ic + "\n" + lb)
+                      ss.setSpan(android.text.style.RelativeSizeSpan(1.7f), 0, ic.length, 0)
+                      t.text = ss
+                  }
+                  t.gravity = Gravity.CENTER
+                  t.setTextColor(col)
+                  t.textSize = 11f
+                  t.setPadding(0, dp(8), 0, dp(8))
+                  t.setOnClickListener { f() }
+                  press(t, 0)
+                  return t
+              }
+
+              private fun flBtn(t: String, f: () -> Unit): TextView {
+                  val b = TextView(this)
+                  b.text = t
+                  b.gravity = Gravity.CENTER
+                  b.setTextColor(Color.WHITE)
+                  b.textSize = 20f
+                  b.typeface = Typeface.DEFAULT_BOLD
+                  val g = GradientDrawable()
+                  g.setColor(0xE62F7BFF.toInt())
+                  g.cornerRadius = dp(12).toFloat()
+                  b.background = g
+                  b.setOnClickListener { f() }
+                  press(b, 12)
+                  return b
+              }
+
+              private fun applyFs() {
+                  rdTop.visibility = if (rdFs) View.GONE else View.VISIBLE
+                  rdNav.visibility = if (rdFs) View.GONE else View.VISIBLE
+                  rdFl.visibility = if (rdFs) View.VISIBLE else View.GONE
+              }
+
+              private fun fillReader() {
+                  reader.removeAllViews()
+                  reader.setBackgroundColor(rBg())
+                  val top = LinearLayout(this)
+                  top.orientation = LinearLayout.HORIZONTAL
+                  top.gravity = Gravity.CENTER_VERTICAL
+                  top.setPadding(dp(12), dp(8), dp(12), dp(8))
+                  top.setBackgroundColor(rPanel())
+                  val logo = ImageView(this)
+                  logo.setImageResource(if (night || !light) R.drawable.logo_d else R.drawable.logo_l)
+                  logo.adjustViewBounds = true
+                  top.addView(logo, LinearLayout.LayoutParams(WRAP, dp(32)))
+                  val br = TextView(this)
+                  val sps = android.text.SpannableString("Best BD Book")
+                  sps.setSpan(ForegroundColorSpan(0xFF5AA2FF.toInt()), 0, 8, 0)
+                  sps.setSpan(ForegroundColorSpan(0xFF4ADE80.toInt()), 8, 12, 0)
+                  br.text = sps
+                  br.typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+                  br.textSize = 16f
+                  br.setPadding(dp(8), 0, 0, 0)
+                  top.addView(br, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  pageT = TextView(this)
+                  pageT.setTextColor(0xFFFFC43D.toInt())
+                  pageT.textSize = 12f
+                  pageT.gravity = Gravity.CENTER
+                  pageT.setPadding(dp(12), 0, dp(12), 0)
+                  pageT.background = rBox()
+                  press(pageT, 10)
+                  pageT.setOnClickListener {
+                      saveProg()
+                      toast(tr("পৃষ্ঠা ", "Page ") + bn(curPage.toString()) + tr(" সেভ হয়েছে", " saved"))
+                  }
+                  top.addView(pageT, LinearLayout.LayoutParams(WRAP, dp(36)))
+                  val nbtn = ImageView(this)
+                  val ic = getDrawable(if (night) R.drawable.ic_sun else R.drawable.ic_moon)!!.mutate()
+                  ic.setTint(rTx())
+                  nbtn.setImageDrawable(ic)
+                  nbtn.setPadding(dp(8), dp(8), dp(8), dp(8))
+                  nbtn.background = rBox()
+                  press(nbtn, 10)
+                  nbtn.setOnClickListener { toggleNight() }
+                  val nlp = LinearLayout.LayoutParams(dp(36), dp(36))
+                  nlp.leftMargin = dp(8)
+                  top.addView(nbtn, nlp)
+                  reader.addView(top, LinearLayout.LayoutParams(MATCH, WRAP))
+
+                  val body = FrameLayout(this)
+                  listV = ListView(this)
+                  listV.divider = null
+                  listV.dividerHeight = dp(8)
+                  listV.setBackgroundColor(if (night) 0xFF111111.toInt() else 0xFFE9EDF4.toInt())
+                  listV.setOnScrollListener(object : AbsListView.OnScrollListener {
+                      override fun onScrollStateChanged(v: AbsListView?, s: Int) {
+                          if (s == AbsListView.OnScrollListener.SCROLL_STATE_IDLE) saveProg()
+                      }
+                      override fun onScroll(v: AbsListView?, first: Int, vis: Int, tot: Int) { updPage(first + 1) }
+                  })
+                  holder = HorizontalScrollView(this)
+                  holder.addView(listV, FrameLayout.LayoutParams(pageW(), MATCH))
+                  body.addView(holder, FrameLayout.LayoutParams(MATCH, MATCH))
+                  val fl = LinearLayout(this)
+                  fl.orientation = LinearLayout.HORIZONTAL
+                  fl.addView(flBtn("−") { setZoom(zoom - 0.2f) }, LinearLayout.LayoutParams(dp(42), dp(42)).also { it.leftMargin = dp(8) })
+                  fl.addView(flBtn("+") { setZoom(zoom + 0.2f) }, LinearLayout.LayoutParams(dp(42), dp(42)).also { it.leftMargin = dp(8) })
+                  fl.addView(flBtn("✕") { rdFs = false; applyFs() }, LinearLayout.LayoutParams(dp(42), dp(42)).also { it.leftMargin = dp(8) })
+                  val flp = FrameLayout.LayoutParams(WRAP, WRAP)
+                  flp.gravity = Gravity.TOP or Gravity.END
+                  flp.topMargin = dp(10)
+                  flp.rightMargin = dp(10)
+                  body.addView(fl, flp)
+                  reader.addView(body, LinearLayout.LayoutParams(MATCH, 0, 1f))
+
+                  val nav = LinearLayout(this)
+                  nav.orientation = LinearLayout.HORIZONTAL
+                  nav.setBackgroundColor(rPanel())
+                  nav.addView(navItem("✕", tr("বন্ধ", "Close"), 0xFFFF6B6B.toInt()) { closeReader() }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  nav.addView(navItem("−", tr("জুম আউট", "Zoom out"), rTx()) { setZoom(zoom - 0.2f) }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  zlT = navItem(bn((zoom * 100).toInt().toString()) + "%", "", rTx()) { }
+                  zlT.textSize = 13f
+                  nav.addView(zlT, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  nav.addView(navItem("+", tr("জুম ইন", "Zoom in"), rTx()) { setZoom(zoom + 0.2f) }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  nav.addView(navItem("□", tr("ফুল পেজ", "Full page"), rTx()) { rdFs = true; applyFs() }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  reader.addView(nav, LinearLayout.LayoutParams(MATCH, WRAP))
+                  rdTop = top
+                  rdNav = nav
+                  rdFl = fl
+                  applyFs()
+              }
+
+              private fun updPage(n: Int) {
+                  curPage = n
+                  pageT.text = bn(tr("পৃষ্ঠা ", "Page ") + "$n / " + (pdf?.pageCount ?: 0))
+              }
+
+              private fun saveProg() {
+                  val f = curFile ?: return
+                  if (pdf == null) return
+                  sp.edit().putInt("p_" + f.name, curPage).putLong("ts_" + f.name, System.currentTimeMillis()).apply()
+              }
+
+              private fun openPdf(f: File) {
+                  closePdf()
+                  try {
+                      pfd = ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
+                      pdf = PdfRenderer(pfd!!)
+                  } catch (e: Exception) {
+                      closePdf()
+                      toast("এই PDF টি খোলা যায়নি")
+                      return
+                  }
+                  curFile = f
+                  zoom = 1.0f
+                  rdFs = false
+                  cache.evictAll()
+                  sp.edit().putInt("t_" + f.name, pdf!!.pageCount).apply()
+                  fillReader()
+                  listV.adapter = PA()
+                  val saved = sp.getInt("p_" + f.name, 1)
+                  listV.post { listV.setSelection(maxOf(0, saved - 1)) }
+                  updPage(saved)
+                  bar.visibility = View.GONE
+                  reader.visibility = View.VISIBLE
+              }
+
+              private fun closePdf() {
+                  try { pdf?.close() } catch (e: Exception) { }
+                  try { pfd?.close() } catch (e: Exception) { }
+                  pdf = null
+                  pfd = null
+                  cache.evictAll()
+              }
+
+              private fun closeReader() {
+                  saveProg()
+                  listV.adapter = null
+                  closePdf()
+                  curFile = null
+                  rdFs = false
+                  reader.visibility = View.GONE
+                  bar.visibility = View.VISIBLE
+                  if (libView.visibility == View.VISIBLE) {
+                      if (curTab == "me") buildProfile() else buildLib()
+                  }
+                  refreshBtn()
+              }
+
+              private fun setZoom(z: Float) {
+                  if (pdf == null) return
+                  val pos = listV.firstVisiblePosition
+                  zoom = z.coerceIn(0.8f, 1.8f)
+                  zlT.text = bn((zoom * 100).toInt().toString()) + "%"
+                  cache.evictAll()
+                  listV.layoutParams = FrameLayout.LayoutParams(pageW(), MATCH)
+                  (listV.adapter as? BaseAdapter)?.notifyDataSetChanged()
+                  listV.setSelection(pos)
+              }
+
+              private fun toggleNight() {
+                  night = !night
+                  sp.edit().putBoolean("rn", night).apply()
+                  val pos = maxOf(0, curPage - 1)
+                  fillReader()
+                  listV.adapter = PA()
+                  listV.post { listV.setSelection(pos) }
+                  updPage(curPage)
+              }
+
+              private fun render(p: Int, w: Int): Bitmap? {
+                  val c = cache.get(p)
+                  if (c != null) return c
+                  val r = pdf ?: return null
+                  return try {
+                      val pg = r.openPage(p)
+                      val h = (w * pg.height.toFloat() / pg.width).toInt()
+                      val bm = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                      bm.eraseColor(Color.WHITE)
+                      pg.render(bm, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                      pg.close()
+                      cache.put(p, bm)
+                      bm
+                  } catch (e: Throwable) {
+                      null
+                  }
+              }
+
+              inner class PA : BaseAdapter() {
+                  override fun getCount(): Int = pdf?.pageCount ?: 0
+                  override fun getItem(p: Int): Any = p
+                  override fun getItemId(p: Int): Long = p.toLong()
+                  override fun getView(p: Int, cv: View?, parent: ViewGroup?): View {
+                      val iv = (cv as? ImageView) ?: ImageView(this@MainActivity)
+                      val w = pageW()
+                      val bm = render(p, w)
+                      iv.scaleType = ImageView.ScaleType.FIT_XY
+                      if (night) { iv.colorFilter = nightF } else { iv.clearColorFilter() }
+                      if (bm != null) {
+                          iv.layoutParams = AbsListView.LayoutParams(w, bm.height)
+                          iv.setImageBitmap(bm)
+                      } else {
+                          iv.layoutParams = AbsListView.LayoutParams(w, (w * 1.41f).toInt())
+                          iv.setImageBitmap(null)
+                      }
+                      return iv
+                  }
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  web.removeCallbacks(poller)
+                  web.postDelayed(poller, 700)
+              }
+
+              override fun onPause() {
+                  web.removeCallbacks(poller)
+                  super.onPause()
+                  saveProg()
+                  syncProfile()
+                  captureHome()
+                  CookieManager.getInstance().flush()
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  closePdf()
+              }
+
+              @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+              override fun onBackPressed() {
+                  if (reader.visibility == View.VISIBLE) { if (rdFs) { rdFs = false; applyFs() } else closeReader() }
+                  else if (libView.visibility == View.VISIBLE && curTab == "me" && profList != null) { profList = null; buildProfile() }
+                  else if (libView.visibility == View.VISIBLE) { if (online()) goSite("home") else super.onBackPressed() }
+                  else if (web.canGoBack()) web.goBack()
+                  else super.onBackPressed()
+              }
+          }
+          EOF_5
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_home.xml <<'EOF_6'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:fillColor="#FFFFFF" android:pathData="M12,2.6 2,11.3h3V21h5.5v-6h3v6H19v-9.7h3z"/>
+          </vector>
+          EOF_6
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_search.xml <<'EOF_7'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6" android:pathData="M4,10.5a6.5,6.5 0 1,0 13,0a6.5,6.5 0 1,0 -13,0"/>
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.8" android:strokeLineCap="round" android:pathData="M15.5,15.5L21,21"/>
+          </vector>
+          EOF_7
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_download.xml <<'EOF_8'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M12,3v11m0,0-4.5,-4.5M12,14l4.5,-4.5M4,20h16"/>
+          </vector>
+          EOF_8
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_me.xml <<'EOF_9'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:fillColor="#FFFFFF" android:pathData="M7.4,7.5a4.6,4.6 0 1,0 9.2,0a4.6,4.6 0 1,0 -9.2,0z"/>
+              <path android:fillColor="#FFFFFF" android:pathData="M3,21c0,-4.2 4,-6.8 9,-6.8s9,2.6 9,6.8z"/>
+          </vector>
+          EOF_9
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_menu.xml <<'EOF_10'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.8" android:strokeLineCap="round" android:pathData="M4,6h16M4,12h16M4,18h16"/>
+          </vector>
+          EOF_10
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_r_rd.xml <<'EOF_11'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="20dp" android:height="20dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M3,5.5C5,4.5 8,4.5 12,6.5c4,-2 7,-2 9,-1V18c-2,-1 -5,-1 -9,1 -4,-2 -7,-2 -9,-1zM12,6.5V19"/>
+          </vector>
+          EOF_11
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_r_dl.xml <<'EOF_12'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="20dp" android:height="20dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M12,3v11m0,0-4.5,-4.5M12,14l4.5,-4.5M4,20h16"/>
+          </vector>
+          EOF_12
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_r_lib.xml <<'EOF_13'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="20dp" android:height="20dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M12,20.5C6,16 3,12.8 3,9.3 3,6.8 4.9,5 7.2,5c1.9,0 3.7,1 4.8,2.8C13.1,6 14.9,5 16.8,5 19.1,5 21,6.8 21,9.3c0,3.5 -3,6.7 -9,11.2z"/>
+          </vector>
+          EOF_13
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_r_bmk.xml <<'EOF_14'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="20dp" android:height="20dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M6,3h12v18l-6,-4.5L6,21z"/>
+          </vector>
+          EOF_14
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_r_hist.xml <<'EOF_15'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="20dp" android:height="20dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M3,12a9,9 0 1,0 18,0a9,9 0 1,0 -18,0"/>
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M12,7v5l3,2"/>
+          </vector>
+          EOF_15
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_sun.xml <<'EOF_16'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="20dp" android:height="20dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M8,12a4,4 0 1,0 8,0a4,4 0 1,0 -8,0"/>
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M12,2v2M12,20v2M2,12h2M20,12h2M4.9,4.9l1.4,1.4M17.7,17.7l1.4,1.4M4.9,19.1l1.4,-1.4M17.7,6.3l1.4,-1.4"/>
+          </vector>
+          EOF_16
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_moon.xml <<'EOF_17'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="20dp" android:height="20dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M21,12.8A9,9 0 1,1 11.2,3a7,7 0 0,0 9.8,9.8z"/>
+          </vector>
+          EOF_17
+          mkdir -p app/src/main/res/drawable-nodpi
+          base64 -d > app/src/main/res/drawable-nodpi/logo_d.png <<'EOF_18'
+          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
+          AAAASUVORK5CYII=
+          EOF_18
+          mkdir -p app/src/main/res/drawable-nodpi
+          base64 -d > app/src/main/res/drawable-nodpi/logo_l.png <<'EOF_19'
+          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
+          SUVORK5CYII=
+          EOF_19
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_fg.xml <<'EOF_20'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#7964DB" android:pathData="M24,38L84,38Q88,38 88,42L88,78Q88,82 84,82L24,82Q20,82 20,78L20,42Q20,38 24,38Z"/>
+              <path android:fillColor="#FFFFFF" android:strokeColor="#7964DB" android:strokeWidth="2" android:strokeLineJoin="round" android:pathData="M27,30Q40,26 54,32L54,76Q40,70 27,74Z"/>
+              <path android:fillColor="#FFFFFF" android:strokeColor="#7964DB" android:strokeWidth="2" android:strokeLineJoin="round" android:pathData="M81,30Q68,26 54,32L54,76Q68,70 81,74Z"/>
+              <path android:strokeColor="#7964DB" android:strokeWidth="2.4" android:strokeLineCap="round" android:pathData="M33,38Q40,36 48,38M33,44Q40,42 48,44M33,50Q40,48 48,50M33,56Q40,54 48,56M33,62Q40,60 48,62M60,38Q68,36 75,38M60,44Q68,42 75,44M60,50Q68,48 75,50M60,56Q68,54 75,56M60,62Q68,60 75,62"/>
+          </vector>
+          EOF_20
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/colors.xml <<'EOF_21'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_bg">#0B1020</color>
+          </resources>
+          EOF_21
+          mkdir -p app/src/main/res/mipmap-anydpi
+          cat > app/src/main/res/mipmap-anydpi/ic_launcher.xml <<'EOF_22'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#0B1020" android:pathData="M24,0L84,0Q108,0 108,24L108,84Q108,108 84,108L24,108Q0,108 0,84L0,24Q0,0 24,0Z"/>
+              <path android:fillColor="#7964DB" android:pathData="M24,38L84,38Q88,38 88,42L88,78Q88,82 84,82L24,82Q20,82 20,78L20,42Q20,38 24,38Z"/>
+              <path android:fillColor="#FFFFFF" android:strokeColor="#7964DB" android:strokeWidth="2" android:strokeLineJoin="round" android:pathData="M27,30Q40,26 54,32L54,76Q40,70 27,74Z"/>
+              <path android:fillColor="#FFFFFF" android:strokeColor="#7964DB" android:strokeWidth="2" android:strokeLineJoin="round" android:pathData="M81,30Q68,26 54,32L54,76Q68,70 81,74Z"/>
+              <path android:strokeColor="#7964DB" android:strokeWidth="2.4" android:strokeLineCap="round" android:pathData="M33,38Q40,36 48,38M33,44Q40,42 48,44M33,50Q40,48 48,50M33,56Q40,54 48,56M33,62Q40,60 48,62M60,38Q68,36 75,38M60,44Q68,42 75,44M60,50Q68,48 75,50M60,56Q68,54 75,56M60,62Q68,60 75,62"/>
+          </vector>
+          EOF_22
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
+          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF_23'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_bg"/>
+              <foreground android:drawable="@drawable/ic_fg"/>
+          </adaptive-icon>
+          EOF_23
+          mkdir -p app
+          base64 -d > app/bbb.jks <<'EOF_24'
+          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
+          AgInEA==
+          EOF_24
+          SITE=$(echo "$SITE_URL" | tr -d ' ')
+          case "$SITE" in http*) ;; *) SITE="https://$SITE" ;; esac
+          sed -i "s|__SITE_URL__|$SITE|" app/src/main/java/com/bestbdbook/app/MainActivity.kt
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_id }}
+          name: Best BD Book APK ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
